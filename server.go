@@ -39,6 +39,7 @@ func (s *Server) Run() error {
 			return err
 		}
 		fmt.Println("ReadFrom", size, addr, string(s.packageData[:size]))
+		fmt.Println("IP ADDR SIZE:", len(addr.IP.To4()))
 
 		size, err = conn.WriteToUDP([]byte("Response Data"), addr)
 		fmt.Println("WriteTo", size, err)

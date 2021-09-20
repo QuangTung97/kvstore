@@ -32,7 +32,7 @@ func NewClient(addr string) (*Client, error) {
 }
 
 // Pipelined ...
-func (c *Client) Pipelined(ctx context.Context, fn func(pipeline *Pipeline) error) error {
+func (c *Client) Pipelined(_ context.Context, fn func(pipeline *Pipeline) error) error {
 	return fn(&Pipeline{conn: c.conn})
 }
 
