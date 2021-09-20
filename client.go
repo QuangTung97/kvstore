@@ -36,13 +36,17 @@ func (c *Client) Pipelined(ctx context.Context, fn func(pipeline *Pipeline) erro
 	return fn(&Pipeline{conn: c.conn})
 }
 
-func (c *Client) Shutdown() {
-	err := c.conn.Close()
-	fmt.Println(err)
+// Shutdown ...
+func (c *Client) Shutdown() error {
+	return c.conn.Close()
 }
 
 // DoSomething ...
 func (p *Pipeline) DoSomething() {
 	size, err := p.conn.Write([]byte("Ta Quang Tung"))
-	fmt.Println(size, err)
+	fmt.Println("Pipeline Write", size, err)
+
+	data := make([]byte, maxPacketSize)
+	size, err = p.conn.Read(data)
+	fmt.Println("Pipeline Read:", size, err, string(data[:size]))
 }

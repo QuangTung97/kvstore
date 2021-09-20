@@ -35,5 +35,9 @@ func TestClient(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	client.Shutdown()
+	err = client.Shutdown()
+	assert.Equal(t, nil, err)
+
+	err = server.Shutdown()
+	assert.Equal(t, nil, err)
 }

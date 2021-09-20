@@ -34,14 +34,18 @@ func (s *Server) Run() error {
 	s.conn = conn
 
 	for {
-		size, addr, err := conn.ReadFrom(s.packageData)
+		size, addr, err := conn.ReadFromUDP(s.packageData)
 		if err != nil {
 			return err
 		}
-		fmt.Println(size, addr, string(s.packageData))
+		fmt.Println("ReadFrom", size, addr, string(s.packageData[:size]))
+
+		size, err = conn.WriteToUDP([]byte("Response Data"), addr)
+		fmt.Println("WriteTo", size, err)
 	}
 }
 
-func (s *Server) Shutdown() {
-	_ = s.conn.Close()
+// Shutdown ...
+func (s *Server) Shutdown() error {
+	return s.conn.Close()
 }
