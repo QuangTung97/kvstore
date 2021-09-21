@@ -73,6 +73,27 @@ func (p *processor) getNextCommand() command {
 	}
 }
 
+func (p *processor) runSingleLoop() {
+	p.mut.Lock()
+	for p.processed >= p.nextOffset {
+		p.cond.Wait()
+	}
+	nextOffset := p.nextOffset
+	p.mut.Unlock()
+
+	for p.processed < nextOffset {
+		cmd := p.getNextCommand()
+
+		p.processCommand(cmd)
+
+		p.updateProcessed(cmd.nextProcessed)
+	}
+}
+
+func (p *processor) processCommand(cmd command) {
+
+}
+
 func (p *processor) updateProcessed(value uint64) {
 	atomic.StoreUint64(&p.processed, value)
 }
