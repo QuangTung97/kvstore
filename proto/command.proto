@@ -53,13 +53,14 @@ enum LeaseGetStatus {
 message CommandLeaseGetResult {
   LeaseGetStatus status = 1;
   uint64 lease_id = 2;
-  string data = 3;
+  string value = 3;
 }
 
 // CommandLeaseSet for lease set
 message CommandLeaseSet {
   string key = 1;
   uint64 lease_id = 2;
+  string value = 3;
 }
 
 // CommandLeaseSetResult for lease set
