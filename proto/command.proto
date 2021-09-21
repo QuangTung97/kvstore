@@ -76,3 +76,13 @@ message CommandInvalidate {
 message CommandInvalidateResult {
   bool affected = 1;
 }
+
+// CommandList a list of commands
+message CommandList {
+  repeated Command commands = 1;
+}
+
+// CommandResultList a list of command results
+message CommandResultList {
+  repeated CommandResult results = 1;
+}
