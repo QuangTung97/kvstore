@@ -2,7 +2,7 @@ package kvstore
 
 import (
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"github.com/QuangTung97/kvstore/kvstorepb"
 	"github.com/QuangTung97/memtable"
 	"net"
@@ -10,22 +10,33 @@ import (
 	"sync/atomic"
 )
 
+//go:generate moq -out processor_mocks_test.go . ResponseSender
+
+// ResponseSender ...
+type ResponseSender interface {
+	Send(ip net.IP, port uint16, data []byte) error
+}
+
 type processor struct {
 	mut  sync.Mutex
 	cond *sync.Cond
 
-	cache *memtable.Memtable
+	cache  *memtable.Memtable
+	sender ResponseSender
 
 	buffer     []byte
 	nextOffset uint64
 	processed  uint64
 	resultList []*kvstorepb.CommandResult
+	resultData []byte
 }
 
-func newProcessor(buffSize int, cache *memtable.Memtable) *processor {
+func newProcessor(buffSize int, cache *memtable.Memtable, sender ResponseSender) *processor {
 	p := &processor{
-		buffer: make([]byte, buffSize),
-		cache:  cache,
+		buffer:     make([]byte, buffSize),
+		cache:      cache,
+		resultData: make([]byte, 1<<14),
+		sender:     sender,
 	}
 	p.cond = sync.NewCond(&p.mut)
 	return p
@@ -39,12 +50,6 @@ type rawCommandList struct {
 	ip   net.IP
 	port uint16
 	data []byte
-}
-
-type commandListHeader struct {
-	batchID uint32
-	length  uint32
-	offset  uint32
 }
 
 func (p *processor) computeSlice(n uint16) []byte {
@@ -145,7 +150,8 @@ func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 }
 
 func (p *processor) processCommandList(rawCmdList rawCommandList) {
-	cmdList, err := parseRawCommandList(rawCmdList.data)
+	//header := parseDataFrameHeader(rawCmdList.data)
+	cmdList, err := parseRawCommandList(rawCmdList.data[dataFrameEntryListOffset:])
 	if err != nil {
 		// TODO logging
 		return
@@ -164,7 +170,31 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 			// TODO logging
 		}
 	}
+
 	// TODO Finishing
+	offset := dataFrameEntryListOffset
+	for i, responseCmd := range p.resultList {
+		size := responseCmd.Size()
+		offset += binary.PutUvarint(p.resultData[offset:], uint64(size))
+		_, err := responseCmd.MarshalToSizedBuffer(p.resultData[offset : offset+size])
+		if err != nil {
+			// TODO error handling
+			fmt.Println(err)
+		}
+		offset += size
+		p.resultList[i] = nil
+	}
+	buildDataFrameHeader(p.resultData, dataFrameHeader{
+		batchID: 1,
+		length:  uint32(offset - dataFrameEntryListOffset),
+		offset:  0,
+	})
+
+	err = p.sender.Send(rawCmdList.ip, rawCmdList.port, p.resultData)
+	if err != nil {
+		// TODO error handling
+		fmt.Println(err)
+	}
 }
 
 func (p *processor) updateProcessed(value uint64) {
@@ -173,44 +203,4 @@ func (p *processor) updateProcessed(value uint64) {
 
 func (p *processor) loadProcessed() uint64 {
 	return atomic.LoadUint64(&p.processed)
-}
-
-const dataLengthIDOffset = 4
-const dataOffsetValueOffset = 8
-const dataCmdListOffset = 12
-
-func parseRawCommandListHeader(data []byte) commandListHeader {
-	batchID := binary.LittleEndian.Uint32(data)
-	length := binary.LittleEndian.Uint32(data[dataLengthIDOffset:])
-	offset := binary.LittleEndian.Uint32(data[dataOffsetValueOffset:])
-
-	return commandListHeader{
-		batchID: batchID,
-		length:  length,
-		offset:  offset,
-	}
-}
-
-func parseRawCommandList(data []byte) ([]*kvstorepb.Command, error) {
-	var result []*kvstorepb.Command
-	for len(data) > 0 {
-		size, offset := binary.Uvarint(data)
-		if offset <= 0 {
-			return nil, errors.New("invalid command size")
-		}
-
-		if len(data) < offset + int(size) {
-			return nil, errors.New("invalid command data size")
-		}
-
-		cmd := &kvstorepb.Command{}
-		err := cmd.Unmarshal(data[offset : offset+int(size)])
-		if err != nil {
-			return nil, err
-		}
-
-		result = append(result, cmd)
-		data = data[uint64(offset)+size:]
-	}
-	return result, nil
 }
