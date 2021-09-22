@@ -1,6 +1,7 @@
 package kvstore
 
 import (
+	"github.com/QuangTung97/kvstore/kvstorepb"
 	"github.com/QuangTung97/memtable"
 	"github.com/stretchr/testify/assert"
 	"net"
@@ -42,5 +43,31 @@ func TestProcessor_RunSingleLoop(t *testing.T) {
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
-	assert.Equal(t, nil, sender.SendCalls()[0].Data)
+
+	data := sender.SendCalls()[0].Data
+
+	header := parseDataFrameHeader(data)
+	assert.Equal(t, uint32(1), header.batchID)
+	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
+	assert.Equal(t, uint32(0), header.offset)
+
+	cmdResults, err := parseCommandResultList(data[dataFrameEntryListOffset:])
+	assert.Equal(t, nil, err)
+	assert.Equal(t, []*kvstorepb.CommandResult{
+		{
+			Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET,
+			Id:   11,
+			LeaseGet: &kvstorepb.CommandLeaseGetResult{
+				Status:  kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_LEASE_GRANTED,
+				LeaseId: 1,
+			},
+		},
+		{
+			Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET,
+			Id:   12,
+			LeaseSet: &kvstorepb.CommandLeaseSetResult{
+				Affected: false,
+			},
+		},
+	}, cmdResults)
 }

@@ -120,6 +120,7 @@ func memtableStatusToLeaseGetStatus(status memtable.GetStatus) kvstorepb.LeaseGe
 func (p *processor) processLeaseGet(id uint64, cmd *kvstorepb.CommandLeaseGet) {
 	if cmd == nil {
 		// TODO Logging
+		fmt.Println("Lease Get is empty")
 		return
 	}
 	result := p.cache.Get([]byte(cmd.Key))
@@ -137,6 +138,7 @@ func (p *processor) processLeaseGet(id uint64, cmd *kvstorepb.CommandLeaseGet) {
 func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 	if cmd == nil {
 		// TODO Logging
+		fmt.Println("Lease Set is empty")
 		return
 	}
 	affected := p.cache.Set([]byte(cmd.Key), uint32(cmd.LeaseId), []byte(cmd.Value))
@@ -163,6 +165,7 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 			p.processLeaseGet(cmd.Id, cmd.LeaseGet)
 
 		case kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET:
+			p.processLeaseSet(cmd.Id, cmd.LeaseSet)
 
 		case kvstorepb.CommandType_COMMAND_TYPE_INVALIDATE:
 
@@ -190,7 +193,7 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 		offset:  0,
 	})
 
-	err = p.sender.Send(rawCmdList.ip, rawCmdList.port, p.resultData)
+	err = p.sender.Send(rawCmdList.ip, rawCmdList.port, p.resultData[:offset])
 	if err != nil {
 		// TODO error handling
 		fmt.Println(err)

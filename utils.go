@@ -28,26 +28,56 @@ func parseDataFrameHeader(data []byte) dataFrameHeader {
 	}
 }
 
-func parseRawCommandList(data []byte) ([]*kvstorepb.Command, error) {
-	var result []*kvstorepb.Command
+func parseEntryList(data []byte, unmarshal func(data []byte) error) error {
 	for len(data) > 0 {
 		size, offset := binary.Uvarint(data)
 		if offset <= 0 {
-			return nil, errors.New("invalid command size")
+			return errors.New("invalid command size")
 		}
 
 		if len(data) < offset+int(size) {
-			return nil, errors.New("invalid command data size")
+			return errors.New("invalid command data size")
 		}
 
-		cmd := &kvstorepb.Command{}
-		err := cmd.Unmarshal(data[offset : offset+int(size)])
+		err := unmarshal(data[offset : offset+int(size)])
 		if err != nil {
-			return nil, err
+			return err
 		}
-
-		result = append(result, cmd)
 		data = data[uint64(offset)+size:]
+	}
+	return nil
+}
+
+func parseRawCommandList(data []byte) ([]*kvstorepb.Command, error) {
+	var result []*kvstorepb.Command
+	err := parseEntryList(data, func(data []byte) error {
+		cmd := &kvstorepb.Command{}
+		err := cmd.Unmarshal(data)
+		if err != nil {
+			return err
+		}
+		result = append(result, cmd)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func parseCommandResultList(data []byte) ([]*kvstorepb.CommandResult, error) {
+	var result []*kvstorepb.CommandResult
+	err := parseEntryList(data, func(data []byte) error {
+		cmdResult := &kvstorepb.CommandResult{}
+		err := cmdResult.Unmarshal(data)
+		if err != nil {
+			return err
+		}
+		result = append(result, cmdResult)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -64,7 +94,7 @@ func buildLeaseGetCmd(id uint64, key string) *kvstorepb.Command {
 
 func buildLeaseSetCmd(id uint64, key string, lease uint64, value string) *kvstorepb.Command {
 	return &kvstorepb.Command{
-		Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET,
+		Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET,
 		Id:   id,
 		LeaseSet: &kvstorepb.CommandLeaseSet{
 			Key:     key,
