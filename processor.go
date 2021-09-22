@@ -2,6 +2,7 @@ package kvstore
 
 import (
 	"encoding/binary"
+	"errors"
 	"github.com/QuangTung97/kvstore/kvstorepb"
 	"github.com/QuangTung97/memtable"
 	"net"
@@ -35,16 +36,15 @@ const lengthOffset = portOffset + 2
 const dataOffset = lengthOffset + 2
 
 type rawCommandList struct {
-	ip            net.IP
-	port          uint16
-	data          []byte
-	nextProcessed uint64
+	ip   net.IP
+	port uint16
+	data []byte
 }
 
-type commandList struct {
-	ip       net.IP
-	port     uint16
-	commands []*kvstorepb.Command
+type commandListHeader struct {
+	batchID uint32
+	length  uint32
+	offset  uint32
 }
 
 func (p *processor) computeSlice(n uint16) []byte {
@@ -69,7 +69,7 @@ func (p *processor) appendCommands(ip net.IP, port uint16, data []byte) {
 	p.cond.Signal()
 }
 
-func (p *processor) getNextRawCommandList() rawCommandList {
+func (p *processor) getNextRawCommandList() (rawCommandList, uint64) {
 	begin := p.processed
 
 	ip := p.buffer[begin : begin+net.IPv6len]
@@ -78,11 +78,10 @@ func (p *processor) getNextRawCommandList() rawCommandList {
 	data := p.buffer[begin+dataOffset : begin+dataOffset+uint64(length)]
 
 	return rawCommandList{
-		ip:            ip,
-		port:          port,
-		data:          data,
-		nextProcessed: dataOffset + uint64(length),
-	}
+		ip:   ip,
+		port: port,
+		data: data,
+	}, dataOffset + uint64(length)
 }
 
 func (p *processor) runSingleLoop() {
@@ -94,11 +93,9 @@ func (p *processor) runSingleLoop() {
 	p.mut.Unlock()
 
 	for p.processed < nextOffset {
-		cmdList := p.getNextRawCommandList()
-
+		cmdList, nextProcessed := p.getNextRawCommandList()
 		p.processCommandList(cmdList)
-
-		p.updateProcessed(cmdList.nextProcessed)
+		p.updateProcessed(nextProcessed)
 	}
 }
 
@@ -148,13 +145,13 @@ func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 }
 
 func (p *processor) processCommandList(rawCmdList rawCommandList) {
-	cmdList, err := parseRawCommandList(rawCmdList)
+	cmdList, err := parseRawCommandList(rawCmdList.data)
 	if err != nil {
 		// TODO logging
 		return
 	}
 
-	for _, cmd := range cmdList.commands {
+	for _, cmd := range cmdList {
 		switch cmd.Type {
 		case kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET:
 			p.processLeaseGet(cmd.Id, cmd.LeaseGet)
@@ -178,16 +175,42 @@ func (p *processor) loadProcessed() uint64 {
 	return atomic.LoadUint64(&p.processed)
 }
 
-func parseRawCommandList(cmdList rawCommandList) (commandList, error) {
-	var pbCmdList kvstorepb.CommandList
-	err := pbCmdList.Unmarshal(cmdList.data)
-	if err != nil {
-		return commandList{}, err
-	}
+const dataLengthIDOffset = 4
+const dataOffsetValueOffset = 8
+const dataCmdListOffset = 12
 
-	return commandList{
-		ip:       cmdList.ip,
-		port:     cmdList.port,
-		commands: pbCmdList.Commands,
-	}, nil
+func parseRawCommandListHeader(data []byte) commandListHeader {
+	batchID := binary.LittleEndian.Uint32(data)
+	length := binary.LittleEndian.Uint32(data[dataLengthIDOffset:])
+	offset := binary.LittleEndian.Uint32(data[dataOffsetValueOffset:])
+
+	return commandListHeader{
+		batchID: batchID,
+		length:  length,
+		offset:  offset,
+	}
+}
+
+func parseRawCommandList(data []byte) ([]*kvstorepb.Command, error) {
+	var result []*kvstorepb.Command
+	for len(data) > 0 {
+		size, offset := binary.Uvarint(data)
+		if offset <= 0 {
+			return nil, errors.New("invalid command size")
+		}
+
+		if len(data) < offset + int(size) {
+			return nil, errors.New("invalid command data size")
+		}
+
+		cmd := &kvstorepb.Command{}
+		err := cmd.Unmarshal(data[offset : offset+int(size)])
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, cmd)
+		data = data[uint64(offset)+size:]
+	}
+	return result, nil
 }
