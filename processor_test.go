@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -115,7 +116,7 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Put_VarUint(t *testing.T) 
 
 	header := parseDataFrameHeader(data)
 	assert.Equal(t, uint32(1), header.batchID)
-	assert.True(t, len(data) <= udpMaxSize)
+	assert.LessOrEqual(t, len(data), udpMaxSize)
 	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
 	assert.Equal(t, uint32(0), header.offset)
 
@@ -144,7 +145,7 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Put_VarUint(t *testing.T) 
 
 	header = parseDataFrameHeader(data)
 	assert.Equal(t, uint32(1), header.batchID)
-	assert.True(t, len(data) <= udpMaxSize)
+	assert.LessOrEqual(t, len(data), udpMaxSize)
 	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
 	assert.Equal(t, uint32(0), header.offset)
 
@@ -165,9 +166,11 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Put_VarUint(t *testing.T) 
 func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Try_To_Marshal(t *testing.T) {
 	cache := memtable.New(10 << 20)
 	sender := &ResponseSenderMock{}
+
+	const udpMaxSize = 31
 	p := newProcessor(1024, cache, sender,
 		computeOptions(
-			WithMaxResultPackageSize(31),
+			WithMaxResultPackageSize(udpMaxSize),
 			WithLogger(newLogger()),
 		))
 
@@ -197,6 +200,7 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Try_To_Marshal(t *testing.
 
 	header := parseDataFrameHeader(data)
 	assert.Equal(t, uint32(1), header.batchID)
+	assert.LessOrEqual(t, len(data), udpMaxSize)
 	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
 	assert.Equal(t, uint32(0), header.offset)
 
@@ -225,6 +229,7 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Try_To_Marshal(t *testing.
 
 	header = parseDataFrameHeader(data)
 	assert.Equal(t, uint32(1), header.batchID)
+	assert.LessOrEqual(t, len(data), udpMaxSize)
 	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
 	assert.Equal(t, uint32(0), header.offset)
 
@@ -240,4 +245,55 @@ func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Try_To_Marshal(t *testing.
 			},
 		},
 	}, cmdResults)
+}
+
+func TestProcessor_RunSingleLoop_Reach_UDP_Limit_When_Value_Too_Big(t *testing.T) {
+	cache := memtable.New(10 << 20)
+	sender := &ResponseSenderMock{}
+
+	const udpMaxSize = 30
+	p := newProcessor(1024, cache, sender,
+		computeOptions(
+			WithMaxResultPackageSize(udpMaxSize),
+			WithLogger(newLogger()),
+		))
+
+	dataCalls := make([][]byte, 0)
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error {
+		d := make([]byte, len(data))
+		copy(d, data)
+		dataCalls = append(dataCalls, d)
+		return nil
+	}
+
+	err := cache.GetUnsafeInnerCache().Set(
+		[]byte("key01"), []byte(strings.Repeat("A", 20)), 0)
+	assert.Equal(t, nil, err)
+
+	p.appendCommands(
+		net.IPv4(192, 168, 0, 1), 8100,
+		buildRawCommandListBatch(80,
+			buildLeaseGetCmd(11, "key01"),
+		),
+	)
+
+	p.runSingleLoop()
+
+	assert.Equal(t, 2, len(dataCalls))
+	assert.Equal(t, udpMaxSize, len(dataCalls[0]))
+	assert.LessOrEqual(t, len(dataCalls[1]), udpMaxSize)
+
+	header1 := parseDataFrameHeader(dataCalls[0])
+	header2 := parseDataFrameHeader(dataCalls[1])
+
+	assert.Equal(t, dataFrameHeader{
+		batchID: 1,
+		length:  29,
+		offset:  0,
+	}, header1)
+	assert.Equal(t, dataFrameHeader{
+		batchID: 1,
+		length:  29,
+		offset:  18,
+	}, header2)
 }

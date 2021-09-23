@@ -28,8 +28,12 @@ type processor struct {
 	buffer     []byte
 	nextOffset uint64
 	processed  uint64
+
 	resultList []*kvstorepb.CommandResult
 	resultData []byte
+	sendFrame  []byte
+
+	maxDataSendSize int
 }
 
 func newProcessor(
@@ -43,7 +47,10 @@ func newProcessor(
 		cache:   cache,
 		sender:  sender,
 
-		resultData: make([]byte, options.maxResultPackageSize),
+		resultData: make([]byte, buffSize),
+		sendFrame:  make([]byte, options.maxResultPackageSize),
+
+		maxDataSendSize: options.maxResultPackageSize - dataFrameEntryListOffset,
 	}
 	p.cond = sync.NewCond(&p.mut)
 	return p
@@ -172,13 +179,13 @@ func (p *processor) tryToPutDataOnResultData(
 	size := responseCmd.Size()
 
 	sizeLen := binary.PutUvarint(sizePlaceholder, uint64(size))
-	if offset+sizeLen > p.options.maxResultPackageSize {
+	if offset+sizeLen > p.maxDataSendSize {
 		return 0, putResultStatusRetry
 	}
 	copy(p.resultData[offset:], sizePlaceholder[:sizeLen])
 	offset += sizeLen
 
-	if offset+size > p.options.maxResultPackageSize {
+	if offset+size > p.maxDataSendSize && lastOffset > 0 {
 		return 0, putResultStatusRetry
 	}
 
@@ -206,7 +213,7 @@ func (p *processor) putDataOnResultData(
 		}
 
 		p.sendCommandResult(ip, port, lastOffset)
-		lastOffset = dataFrameEntryListOffset
+		lastOffset = 0
 	}
 }
 
@@ -237,8 +244,9 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 
 	var sizePlaceholder [binary.MaxVarintLen64]byte
 
-	offset := dataFrameEntryListOffset
+	offset := 0
 	for i, responseCmd := range p.resultList {
+		p.resultList[i] = nil
 		nextOffset, ok := p.putDataOnResultData(
 			rawCmdList.ip, rawCmdList.port,
 			responseCmd, sizePlaceholder[:],
@@ -248,23 +256,34 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 			return
 		}
 		offset = nextOffset
-		p.resultList[i] = nil
 	}
 
 	p.sendCommandResult(rawCmdList.ip, rawCmdList.port, offset)
 }
 
 func (p *processor) sendCommandResult(ip net.IP, port uint16, offset int) {
-	buildDataFrameHeader(p.resultData, dataFrameHeader{
-		batchID: 1,
-		length:  uint32(offset - dataFrameEntryListOffset),
-		offset:  0,
-	})
+	for index := 0; index < offset; {
+		nextIndex := index + p.maxDataSendSize
+		if nextIndex > offset {
+			nextIndex = offset
+		}
+		size := nextIndex - index
 
-	err := p.sender.Send(ip, port, p.resultData[:offset])
-	if err != nil {
-		p.options.logger.Error("send command result error", zap.Error(err))
-		return
+		buildDataFrameHeader(p.sendFrame, dataFrameHeader{
+			batchID: 1, // TODO inc batch id
+			length:  uint32(offset),
+			offset:  uint32(index),
+		})
+		copy(p.sendFrame[dataFrameEntryListOffset:dataFrameEntryListOffset+size], p.resultData[index:nextIndex])
+
+		sendData := p.sendFrame[:dataFrameEntryListOffset+size]
+		err := p.sender.Send(ip, port, sendData)
+		if err != nil {
+			p.options.logger.Error("send command result error", zap.Error(err))
+			return
+		}
+
+		index = nextIndex
 	}
 }
 
