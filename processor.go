@@ -2,9 +2,9 @@ package kvstore
 
 import (
 	"encoding/binary"
-	"fmt"
 	"github.com/QuangTung97/kvstore/kvstorepb"
 	"github.com/QuangTung97/memtable"
+	"go.uber.org/zap"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -21,8 +21,9 @@ type processor struct {
 	mut  sync.Mutex
 	cond *sync.Cond
 
-	cache  *memtable.Memtable
-	sender ResponseSender
+	options kvstoreOptions
+	cache   *memtable.Memtable
+	sender  ResponseSender
 
 	buffer     []byte
 	nextOffset uint64
@@ -31,12 +32,18 @@ type processor struct {
 	resultData []byte
 }
 
-func newProcessor(buffSize int, cache *memtable.Memtable, sender ResponseSender) *processor {
+func newProcessor(
+	buffSize int, cache *memtable.Memtable,
+	sender ResponseSender, options kvstoreOptions,
+) *processor {
 	p := &processor{
-		buffer:     make([]byte, buffSize),
-		cache:      cache,
+		buffer: make([]byte, buffSize),
+
+		options: options,
+		cache:   cache,
+		sender:  sender,
+
 		resultData: make([]byte, 1<<14),
-		sender:     sender,
 	}
 	p.cond = sync.NewCond(&p.mut)
 	return p
@@ -119,8 +126,7 @@ func memtableStatusToLeaseGetStatus(status memtable.GetStatus) kvstorepb.LeaseGe
 
 func (p *processor) processLeaseGet(id uint64, cmd *kvstorepb.CommandLeaseGet) {
 	if cmd == nil {
-		// TODO Logging
-		fmt.Println("Lease Get is empty")
+		p.options.logger.Error("lease_get is empty")
 		return
 	}
 	result := p.cache.Get([]byte(cmd.Key))
@@ -137,8 +143,7 @@ func (p *processor) processLeaseGet(id uint64, cmd *kvstorepb.CommandLeaseGet) {
 
 func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 	if cmd == nil {
-		// TODO Logging
-		fmt.Println("Lease Set is empty")
+		p.options.logger.Error("lease_set is empty")
 		return
 	}
 	affected := p.cache.Set([]byte(cmd.Key), uint32(cmd.LeaseId), []byte(cmd.Value))
@@ -152,10 +157,12 @@ func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 }
 
 func (p *processor) processCommandList(rawCmdList rawCommandList) {
+	logger := p.options.logger
+
 	//header := parseDataFrameHeader(rawCmdList.data)
 	cmdList, err := parseRawCommandList(rawCmdList.data[dataFrameEntryListOffset:])
 	if err != nil {
-		// TODO logging
+		logger.Error("error when parse raw command list", zap.Error(err))
 		return
 	}
 
@@ -170,33 +177,47 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 		case kvstorepb.CommandType_COMMAND_TYPE_INVALIDATE:
 
 		default:
-			// TODO logging
+			logger.Error("invalid command type", zap.Any("cmd.type", cmd.Type))
 		}
 	}
 
-	// TODO Finishing
+	var sizePlaceholder [binary.MaxVarintLen64]byte
+
 	offset := dataFrameEntryListOffset
 	for i, responseCmd := range p.resultList {
 		size := responseCmd.Size()
-		offset += binary.PutUvarint(p.resultData[offset:], uint64(size))
+
+		sizeLen := binary.PutUvarint(sizePlaceholder[:], uint64(size))
+		if offset+sizeLen > p.options.maxResultPackageSize {
+			p.sendCommandResult(rawCmdList.ip, rawCmdList.port, offset)
+			offset = dataFrameEntryListOffset
+		}
+		copy(p.resultData[offset:], sizePlaceholder[:sizeLen])
+		offset += sizeLen
+
 		_, err := responseCmd.MarshalToSizedBuffer(p.resultData[offset : offset+size])
 		if err != nil {
-			// TODO error handling
-			fmt.Println(err)
+			logger.Error("error when marshal protobuf", zap.Error(err))
+			return
 		}
 		offset += size
 		p.resultList[i] = nil
 	}
+
+	p.sendCommandResult(rawCmdList.ip, rawCmdList.port, offset)
+}
+
+func (p *processor) sendCommandResult(ip net.IP, port uint16, offset int) {
 	buildDataFrameHeader(p.resultData, dataFrameHeader{
 		batchID: 1,
 		length:  uint32(offset - dataFrameEntryListOffset),
 		offset:  0,
 	})
 
-	err = p.sender.Send(rawCmdList.ip, rawCmdList.port, p.resultData[:offset])
+	err := p.sender.Send(ip, port, p.resultData[:offset])
 	if err != nil {
-		// TODO error handling
-		fmt.Println(err)
+		p.options.logger.Error("send command result error", zap.Error(err))
+		return
 	}
 }
 

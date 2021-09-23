@@ -11,12 +11,10 @@ type Server struct {
 	conn        *net.UDPConn
 }
 
-const maxPacketSize = 1 << 16
-
 // NewServer ...
 func NewServer() *Server {
 	return &Server{
-		packageData: make([]byte, maxPacketSize),
+		packageData: make([]byte, 10000),
 	}
 }
 

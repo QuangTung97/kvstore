@@ -9,7 +9,7 @@ import (
 )
 
 func TestProcessor(t *testing.T) {
-	p := newProcessor(1024, nil, nil)
+	p := newProcessor(1024, nil, nil, computeOptions())
 	assert.Equal(t, uint64(0), p.nextOffset)
 	p.appendCommands(net.IPv4(192, 168, 0, 1), 8100, []byte("some-data"))
 	assert.Equal(t, uint64(20+len("some-data")), p.nextOffset)
@@ -28,7 +28,7 @@ func TestProcessor(t *testing.T) {
 func TestProcessor_RunSingleLoop(t *testing.T) {
 	cache := memtable.New(10 << 20)
 	sender := &ResponseSenderMock{}
-	p := newProcessor(1024, cache, sender)
+	p := newProcessor(1024, cache, sender, computeOptions())
 
 	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
 
@@ -67,6 +67,83 @@ func TestProcessor_RunSingleLoop(t *testing.T) {
 			Id:   12,
 			LeaseSet: &kvstorepb.CommandLeaseSetResult{
 				Affected: false,
+			},
+		},
+	}, cmdResults)
+}
+
+func TestProcessor_RunSingleLoop_Reach_UDP_Limit(t *testing.T) {
+	cache := memtable.New(10 << 20)
+	sender := &ResponseSenderMock{}
+	p := newProcessor(1024, cache, sender,
+		computeOptions(WithMaxResultPackageSize(30)))
+
+	dataCalls := make([][]byte, 0)
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error {
+		d := make([]byte, len(data))
+		copy(d, data)
+		dataCalls = append(dataCalls, d)
+		return nil
+	}
+
+	p.appendCommands(
+		net.IPv4(192, 168, 0, 1), 8100,
+		buildRawCommandListBatch(80,
+			buildLeaseGetCmd(11, "key01"),
+			buildLeaseSetCmd(12, "key02", 200, "value02"),
+			buildLeaseGetCmd(13, "key03"),
+		),
+	)
+
+	p.runSingleLoop()
+
+	assert.Equal(t, 2, len(dataCalls))
+
+	// First Batch
+	data := dataCalls[0]
+
+	header := parseDataFrameHeader(data)
+	assert.Equal(t, uint32(1), header.batchID)
+	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
+	assert.Equal(t, uint32(0), header.offset)
+
+	cmdResults, err := parseCommandResultList(data[dataFrameEntryListOffset:])
+	assert.Equal(t, nil, err)
+	assert.Equal(t, []*kvstorepb.CommandResult{
+		{
+			Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET,
+			Id:   11,
+			LeaseGet: &kvstorepb.CommandLeaseGetResult{
+				Status:  kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_LEASE_GRANTED,
+				LeaseId: 1,
+			},
+		},
+		{
+			Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET,
+			Id:   12,
+			LeaseSet: &kvstorepb.CommandLeaseSetResult{
+				Affected: false,
+			},
+		},
+	}, cmdResults)
+
+	// Second Batch
+	data = dataCalls[1]
+
+	header = parseDataFrameHeader(data)
+	assert.Equal(t, uint32(1), header.batchID)
+	assert.Equal(t, uint32(len(data)-dataFrameEntryListOffset), header.length)
+	assert.Equal(t, uint32(0), header.offset)
+
+	cmdResults, err = parseCommandResultList(data[dataFrameEntryListOffset:])
+	assert.Equal(t, nil, err)
+	assert.Equal(t, []*kvstorepb.CommandResult{
+		{
+			Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET,
+			Id:   13,
+			LeaseGet: &kvstorepb.CommandLeaseGetResult{
+				Status:  kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_LEASE_GRANTED,
+				LeaseId: 1,
 			},
 		},
 	}, cmdResults)

@@ -46,7 +46,7 @@ func (p *Pipeline) DoSomething() {
 	size, err := p.conn.Write([]byte("Ta Quang Tung"))
 	fmt.Println("Pipeline Write", size, err)
 
-	data := make([]byte, maxPacketSize)
+	data := make([]byte, 1<<15)
 	size, err = p.conn.Read(data)
 	fmt.Println("Pipeline Read:", size, err, string(data[:size]))
 }
