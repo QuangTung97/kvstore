@@ -43,7 +43,7 @@ func newProcessor(
 		cache:   cache,
 		sender:  sender,
 
-		resultData: make([]byte, 1<<14),
+		resultData: make([]byte, options.maxResultPackageSize),
 	}
 	p.cond = sync.NewCond(&p.mut)
 	return p
@@ -156,6 +156,60 @@ func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
 	})
 }
 
+type putResultStatus int
+
+const (
+	putResultStatusOK    putResultStatus = 1
+	putResultStatusRetry putResultStatus = 2
+	putResultStatusError putResultStatus = 3
+)
+
+func (p *processor) tryToPutDataOnResultData(
+	responseCmd *kvstorepb.CommandResult, sizePlaceholder []byte,
+	lastOffset int,
+) (int, putResultStatus) {
+	offset := lastOffset
+	size := responseCmd.Size()
+
+	sizeLen := binary.PutUvarint(sizePlaceholder, uint64(size))
+	if offset+sizeLen > p.options.maxResultPackageSize {
+		return 0, putResultStatusRetry
+	}
+	copy(p.resultData[offset:], sizePlaceholder[:sizeLen])
+	offset += sizeLen
+
+	if offset+size > p.options.maxResultPackageSize {
+		return 0, putResultStatusRetry
+	}
+
+	_, err := responseCmd.MarshalToSizedBuffer(p.resultData[offset : offset+size])
+	if err != nil {
+		p.options.logger.Error("error when marshal protobuf", zap.Error(err))
+		return 0, putResultStatusError
+	}
+
+	return offset + size, putResultStatusOK
+}
+
+func (p *processor) putDataOnResultData(
+	ip net.IP, port uint16,
+	responseCmd *kvstorepb.CommandResult, sizePlaceholder []byte,
+	lastOffset int,
+) (int, bool) {
+	for {
+		nextOffset, status := p.tryToPutDataOnResultData(responseCmd, sizePlaceholder, lastOffset)
+		if status == putResultStatusError {
+			return 0, false
+		}
+		if status == putResultStatusOK {
+			return nextOffset, true
+		}
+
+		p.sendCommandResult(ip, port, lastOffset)
+		lastOffset = dataFrameEntryListOffset
+	}
+}
+
 func (p *processor) processCommandList(rawCmdList rawCommandList) {
 	logger := p.options.logger
 
@@ -185,22 +239,15 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 
 	offset := dataFrameEntryListOffset
 	for i, responseCmd := range p.resultList {
-		size := responseCmd.Size()
-
-		sizeLen := binary.PutUvarint(sizePlaceholder[:], uint64(size))
-		if offset+sizeLen > p.options.maxResultPackageSize {
-			p.sendCommandResult(rawCmdList.ip, rawCmdList.port, offset)
-			offset = dataFrameEntryListOffset
-		}
-		copy(p.resultData[offset:], sizePlaceholder[:sizeLen])
-		offset += sizeLen
-
-		_, err := responseCmd.MarshalToSizedBuffer(p.resultData[offset : offset+size])
-		if err != nil {
-			logger.Error("error when marshal protobuf", zap.Error(err))
+		nextOffset, ok := p.putDataOnResultData(
+			rawCmdList.ip, rawCmdList.port,
+			responseCmd, sizePlaceholder[:],
+			offset,
+		)
+		if !ok {
 			return
 		}
-		offset += size
+		offset = nextOffset
 		p.resultList[i] = nil
 	}
 
