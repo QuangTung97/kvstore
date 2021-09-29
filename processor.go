@@ -217,6 +217,21 @@ func (p *processor) putDataOnResultData(
 	}
 }
 
+func (p *processor) processCommand(cmd *kvstorepb.Command) {
+	switch cmd.Type {
+	case kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET:
+		p.processLeaseGet(cmd.Id, cmd.LeaseGet)
+
+	case kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET:
+		p.processLeaseSet(cmd.Id, cmd.LeaseSet)
+
+	case kvstorepb.CommandType_COMMAND_TYPE_INVALIDATE:
+
+	default:
+		p.options.logger.Error("invalid command type", zap.Any("cmd.type", cmd.Type))
+	}
+}
+
 func (p *processor) processCommandList(rawCmdList rawCommandList) {
 	logger := p.options.logger
 
@@ -228,18 +243,7 @@ func (p *processor) processCommandList(rawCmdList rawCommandList) {
 	}
 
 	for _, cmd := range cmdList {
-		switch cmd.Type {
-		case kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET:
-			p.processLeaseGet(cmd.Id, cmd.LeaseGet)
-
-		case kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET:
-			p.processLeaseSet(cmd.Id, cmd.LeaseSet)
-
-		case kvstorepb.CommandType_COMMAND_TYPE_INVALIDATE:
-
-		default:
-			logger.Error("invalid command type", zap.Any("cmd.type", cmd.Type))
-		}
+		p.processCommand(cmd)
 	}
 
 	var sizePlaceholder [binary.MaxVarintLen64]byte
