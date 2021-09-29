@@ -99,3 +99,5 @@ func TestParser_LGET_Missing_Key(t *testing.T) {
 
 	assert.Equal(t, errors.New("missing key"), err)
 }
+
+// TODO more validation

@@ -2,9 +2,8 @@ package kvstore
 
 import (
 	"encoding/binary"
-	"github.com/QuangTung97/kvstore/kvstorepb"
+	"fmt"
 	"github.com/QuangTung97/memtable"
-	"go.uber.org/zap"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -29,7 +28,6 @@ type processor struct {
 	nextOffset uint64
 	processed  uint64
 
-	resultList []*kvstorepb.CommandResult
 	resultData []byte
 	sendFrame  []byte
 
@@ -113,181 +111,8 @@ func (p *processor) runSingleLoop() {
 
 	for p.processed < nextOffset {
 		cmdList, nextProcessed := p.getNextRawCommandList()
-		p.processCommandList(cmdList)
+		fmt.Println(cmdList)
 		p.updateProcessed(nextProcessed)
-	}
-}
-
-func memtableStatusToLeaseGetStatus(status memtable.GetStatus) kvstorepb.LeaseGetStatus {
-	switch status {
-	case memtable.GetStatusFound:
-		return kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_FOUND
-	case memtable.GetStatusLeaseGranted:
-		return kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_LEASE_GRANTED
-	case memtable.GetStatusLeaseRejected:
-		return kvstorepb.LeaseGetStatus_LEASE_GET_STATUS_LEASE_REJECTED
-	default:
-		panic("invalid memtable status")
-	}
-}
-
-func (p *processor) processLeaseGet(id uint64, cmd *kvstorepb.CommandLeaseGet) {
-	if cmd == nil {
-		p.options.logger.Error("lease_get is empty")
-		return
-	}
-	result := p.cache.Get([]byte(cmd.Key))
-	p.resultList = append(p.resultList, &kvstorepb.CommandResult{
-		Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET,
-		Id:   id,
-		LeaseGet: &kvstorepb.CommandLeaseGetResult{
-			Status:  memtableStatusToLeaseGetStatus(result.Status),
-			LeaseId: uint64(result.LeaseID),
-			Value:   string(result.Value),
-		},
-	})
-}
-
-func (p *processor) processLeaseSet(id uint64, cmd *kvstorepb.CommandLeaseSet) {
-	if cmd == nil {
-		p.options.logger.Error("lease_set is empty")
-		return
-	}
-	affected := p.cache.Set([]byte(cmd.Key), uint32(cmd.LeaseId), []byte(cmd.Value))
-	p.resultList = append(p.resultList, &kvstorepb.CommandResult{
-		Type: kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET,
-		Id:   id,
-		LeaseSet: &kvstorepb.CommandLeaseSetResult{
-			Affected: affected,
-		},
-	})
-}
-
-type putResultStatus int
-
-const (
-	putResultStatusOK    putResultStatus = 1
-	putResultStatusRetry putResultStatus = 2
-	putResultStatusError putResultStatus = 3
-)
-
-func (p *processor) tryToPutDataOnResultData(
-	responseCmd *kvstorepb.CommandResult, sizePlaceholder []byte,
-	lastOffset int,
-) (int, putResultStatus) {
-	offset := lastOffset
-	size := responseCmd.Size()
-
-	sizeLen := binary.PutUvarint(sizePlaceholder, uint64(size))
-	if offset+sizeLen > p.maxDataSendSize {
-		return 0, putResultStatusRetry
-	}
-	copy(p.resultData[offset:], sizePlaceholder[:sizeLen])
-	offset += sizeLen
-
-	if offset+size > p.maxDataSendSize && lastOffset > 0 {
-		return 0, putResultStatusRetry
-	}
-
-	_, err := responseCmd.MarshalToSizedBuffer(p.resultData[offset : offset+size])
-	if err != nil {
-		p.options.logger.Error("error when marshal protobuf", zap.Error(err))
-		return 0, putResultStatusError
-	}
-
-	return offset + size, putResultStatusOK
-}
-
-func (p *processor) putDataOnResultData(
-	ip net.IP, port uint16,
-	responseCmd *kvstorepb.CommandResult, sizePlaceholder []byte,
-	lastOffset int,
-) (int, bool) {
-	for {
-		nextOffset, status := p.tryToPutDataOnResultData(responseCmd, sizePlaceholder, lastOffset)
-		if status == putResultStatusError {
-			return 0, false
-		}
-		if status == putResultStatusOK {
-			return nextOffset, true
-		}
-
-		p.sendCommandResult(ip, port, lastOffset)
-		lastOffset = 0
-	}
-}
-
-func (p *processor) processCommand(cmd *kvstorepb.Command) {
-	switch cmd.Type {
-	case kvstorepb.CommandType_COMMAND_TYPE_LEASE_GET:
-		p.processLeaseGet(cmd.Id, cmd.LeaseGet)
-
-	case kvstorepb.CommandType_COMMAND_TYPE_LEASE_SET:
-		p.processLeaseSet(cmd.Id, cmd.LeaseSet)
-
-	case kvstorepb.CommandType_COMMAND_TYPE_INVALIDATE:
-
-	default:
-		p.options.logger.Error("invalid command type", zap.Any("cmd.type", cmd.Type))
-	}
-}
-
-func (p *processor) processCommandList(rawCmdList rawCommandList) {
-	logger := p.options.logger
-
-	//header := parseDataFrameHeader(rawCmdList.data)
-	cmdList, err := parseRawCommandList(rawCmdList.data[dataFrameEntryListOffset:])
-	if err != nil {
-		logger.Error("error when parse raw command list", zap.Error(err))
-		return
-	}
-
-	for _, cmd := range cmdList {
-		p.processCommand(cmd)
-	}
-
-	var sizePlaceholder [binary.MaxVarintLen64]byte
-
-	offset := 0
-	for i, responseCmd := range p.resultList {
-		p.resultList[i] = nil
-		nextOffset, ok := p.putDataOnResultData(
-			rawCmdList.ip, rawCmdList.port,
-			responseCmd, sizePlaceholder[:],
-			offset,
-		)
-		if !ok {
-			return
-		}
-		offset = nextOffset
-	}
-
-	p.sendCommandResult(rawCmdList.ip, rawCmdList.port, offset)
-}
-
-func (p *processor) sendCommandResult(ip net.IP, port uint16, offset int) {
-	for index := 0; index < offset; {
-		nextIndex := index + p.maxDataSendSize
-		if nextIndex > offset {
-			nextIndex = offset
-		}
-		size := nextIndex - index
-
-		buildDataFrameHeader(p.sendFrame, dataFrameHeader{
-			batchID: 1, // TODO inc batch id
-			length:  uint32(offset),
-			offset:  uint32(index),
-		})
-		copy(p.sendFrame[dataFrameEntryListOffset:dataFrameEntryListOffset+size], p.resultData[index:nextIndex])
-
-		sendData := p.sendFrame[:dataFrameEntryListOffset+size]
-		err := p.sender.Send(ip, port, sendData)
-		if err != nil {
-			p.options.logger.Error("send command result error", zap.Error(err))
-			return
-		}
-
-		index = nextIndex
 	}
 }
 
