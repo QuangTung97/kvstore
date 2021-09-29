@@ -55,6 +55,10 @@ const (
 	charNull  = '\x00'
 )
 
+func (s *scanner) reset() {
+	s.tokens = s.tokens[:0]
+}
+
 func (s *scanner) scan(data []byte) {
 	s.state = scannerStateInit
 	s.begin = 0
