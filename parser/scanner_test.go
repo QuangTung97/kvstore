@@ -11,6 +11,14 @@ func newScanner() *scanner {
 	return s
 }
 
+func TestScanner_Empty(t *testing.T) {
+	p := newScanner()
+
+	input := []byte("")
+	p.scan(input)
+	assert.Equal(t, []token{}, p.tokens)
+}
+
 func TestScanner_Simple_LGET(t *testing.T) {
 	p := newScanner()
 
@@ -196,4 +204,13 @@ func TestScanner_ScanBinary(t *testing.T) {
 	assert.Equal(t, []byte("some-value"), p.tokens[0].getData(input))
 	assert.Equal(t, []byte("LGET"), p.tokens[1].getData(input))
 	assert.Equal(t, []byte("\r\n"), p.tokens[2].getData(input))
+}
+
+func TestScanner_ScanBinary_Not_Enough_Data(t *testing.T) {
+	p := newScanner()
+
+	input := []byte("random")
+	p.scanBinary(10, input)
+
+	assert.Equal(t, 0, len(p.tokens))
 }

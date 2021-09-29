@@ -65,6 +65,9 @@ func (s *scanner) scan(data []byte) {
 }
 
 func (s *scanner) scanBinary(size int, data []byte) {
+	if size > len(data) {
+		return
+	}
 	s.tokens = append(s.tokens, token{
 		tokenType: tokenTypeBinary,
 		begin:     0,
