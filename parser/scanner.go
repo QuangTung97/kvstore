@@ -64,6 +64,19 @@ func (s *scanner) scan(data []byte) {
 	s.handleChar(data, len(data), charSpace)
 }
 
+func (s *scanner) scanBinary(size int, data []byte) {
+	s.tokens = append(s.tokens, token{
+		tokenType: tokenTypeBinary,
+		begin:     0,
+		end:       size,
+	})
+	s.scan(data[size:])
+	for i := range s.tokens[1:] {
+		s.tokens[i+1].begin += size
+		s.tokens[i+1].end += size
+	}
+}
+
 func isWhitespaceChar(c byte) bool {
 	return c == charSpace || c == charTab || c == charLF || c == charNull
 }

@@ -180,3 +180,20 @@ func TestScanner_Multiple_Tokens_With_Int(t *testing.T) {
 	assert.Equal(t, []byte("1235"), p.tokens[3].getData(input))
 	assert.Equal(t, []byte("\r\n"), p.tokens[4].getData(input))
 }
+
+func TestScanner_ScanBinary(t *testing.T) {
+	p := newScanner()
+
+	input := []byte("some-value LGET \r\n")
+	p.scanBinary(10, input)
+
+	assert.Equal(t, 3, len(p.tokens))
+
+	assert.Equal(t, tokenTypeBinary, p.tokens[0].tokenType)
+	assert.Equal(t, tokenTypeLGET, p.tokens[1].tokenType)
+	assert.Equal(t, tokenTypeCRLF, p.tokens[2].tokenType)
+
+	assert.Equal(t, []byte("some-value"), p.tokens[0].getData(input))
+	assert.Equal(t, []byte("LGET"), p.tokens[1].getData(input))
+	assert.Equal(t, []byte("\r\n"), p.tokens[2].getData(input))
+}
