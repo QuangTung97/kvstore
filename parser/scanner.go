@@ -88,6 +88,10 @@ func isDigitChar(c byte) bool {
 	return c >= '0' && c <= '9'
 }
 
+func isWhitespaceOrCRChar(c byte) bool {
+	return isWhitespaceChar(c) || c == charCR
+}
+
 func (s *scanner) handleCharForInitState(index int, c byte) {
 	if isWhitespaceChar(c) {
 		return
@@ -116,7 +120,7 @@ func (s *scanner) handleChar(data []byte, index int, c byte) {
 		s.handleCharForInitState(index, c)
 
 	case scannerStateIdent:
-		if !isWhitespaceChar(c) && c != charCR {
+		if !isWhitespaceOrCRChar(c) {
 			return
 		}
 		s.appendIdent(data, index)
@@ -132,6 +136,10 @@ func (s *scanner) handleChar(data []byte, index int, c byte) {
 
 	case scannerStateNumber:
 		if isDigitChar(c) {
+			return
+		}
+		if !isWhitespaceOrCRChar(c) {
+			s.state = scannerStateIdent
 			return
 		}
 		s.appendInt(index)

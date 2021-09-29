@@ -10,15 +10,17 @@ type CommandHandler interface {
 // Parser ...
 type Parser struct {
 	handler CommandHandler
+	scanner scanner
 }
 
 // InitParser ...
 func InitParser(p *Parser, handler CommandHandler) {
 	p.handler = handler
+	initScanner(&p.scanner)
 }
 
 // Process ...
 func (p *Parser) Process(data []byte) {
-	key := data[:len(LGET)+1]
-	p.handler.OnLGET(key)
+	p.scanner.scan(data)
+	p.handler.OnLGET(p.scanner.tokens[1].getData(data))
 }
