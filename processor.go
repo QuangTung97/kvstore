@@ -47,8 +47,6 @@ func newProcessor(
 
 		resultData: make([]byte, buffSize),
 		sendFrame:  make([]byte, options.maxResultPackageSize),
-
-		maxDataSendSize: options.maxResultPackageSize - dataFrameEntryListOffset,
 	}
 	p.cond = sync.NewCond(&p.mut)
 	return p

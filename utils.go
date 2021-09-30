@@ -11,21 +11,40 @@ type dataFrameHeader struct {
 	offset     uint32
 }
 
-const dataFrameLengthOffset = 4
-const dataFrameOffsetFieldOffset = 8
-const dataFrameEntryListOffset = 12
+const fragmentedBitMask uint64 = 1 << 63
+const batchIDMask = ^fragmentedBitMask
 
-func parseDataFrameHeader(data []byte) dataFrameHeader {
+const dataFrameLengthOffset = 8
+const dataFrameOffsetFieldOffset = dataFrameLengthOffset + 4
+const dataFrameEntryListOffset = dataFrameOffsetFieldOffset + 4
+
+func parseDataFrameHeader(data []byte) (dataFrameHeader, int, error) {
 	batchID := binary.LittleEndian.Uint64(data)
+	if batchID&fragmentedBitMask == 0 {
+		return dataFrameHeader{
+			batchID:    batchID,
+			fragmented: false,
+		}, 0, nil
+	}
+
 	length := binary.LittleEndian.Uint32(data[dataFrameLengthOffset:])
 	offset := binary.LittleEndian.Uint32(data[dataFrameOffsetFieldOffset:])
 
 	return dataFrameHeader{
-		batchID: batchID,
-		length:  length,
-		offset:  offset,
-	}
+		batchID:    batchID & batchIDMask,
+		fragmented: true,
+		length:     length,
+		offset:     offset,
+	}, 0, nil
 }
 
 func buildDataFrameHeader(data []byte, header dataFrameHeader) {
+	if !header.fragmented {
+		binary.LittleEndian.PutUint64(data, header.batchID)
+		return
+	}
+	batchID := header.batchID | fragmentedBitMask
+	binary.LittleEndian.PutUint64(data, batchID)
+	binary.LittleEndian.PutUint32(data[dataFrameLengthOffset:], header.length)
+	binary.LittleEndian.PutUint32(data[dataFrameOffsetFieldOffset:], header.offset)
 }
