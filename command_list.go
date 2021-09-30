@@ -26,7 +26,7 @@ type commandListStore struct {
 	stopped bool
 
 	buffer     []byte
-	nextOffset atomicUint64
+	nextOffset uint64
 	processed  atomicUint64
 
 	currentCommandData []byte
@@ -58,16 +58,16 @@ func initCommandListStore(s *commandListStore, bufSize int) {
 	s.cond = sync.NewCond(&s.mut)
 }
 
-func (s *commandListStore) appendBytes(offset uint64, data []byte) uint64 {
+func (s *commandListStore) appendBytes(data []byte) {
 	max := len(s.buffer)
-	index := int(offset) % max
+	index := int(s.nextOffset) % max
 	copy(s.buffer[index:], data)
 	if index+len(data) > max {
 		firstPart := max - index
 		secondPart := len(data) - firstPart
 		copy(s.buffer[:secondPart], data[firstPart:])
 	}
-	return offset + uint64(len(data))
+	s.nextOffset += uint64(len(data))
 }
 
 func (s *commandListStore) readAt(data []byte, pos uint64) {
@@ -92,10 +92,8 @@ func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
 	header.port = port
 	header.length = length
 
-	offset := s.nextOffset.load()
-	offset = s.appendBytes(offset, headerData[:])
-	offset = s.appendBytes(offset, data)
-	s.nextOffset.store(offset)
+	s.appendBytes(headerData[:])
+	s.appendBytes(data)
 
 	s.mut.Unlock()
 	s.cond.Signal()
@@ -128,7 +126,7 @@ func (s *commandListStore) getCommitProcessed() uint64 {
 
 func (s *commandListStore) waitAvailable() bool {
 	s.mut.Lock()
-	for s.nextOffset.load() <= s.processed.load() && !s.stopped {
+	for s.nextOffset <= s.processed.load() && !s.stopped {
 		s.cond.Wait()
 	}
 	continued := !s.stopped
@@ -139,7 +137,7 @@ func (s *commandListStore) waitAvailable() bool {
 func (s *commandListStore) isCommandAppendable(dataSize int) bool {
 	max := uint64(len(s.buffer))
 	sizeWithHeader := uint64(dataSize) + commandListHeaderSize
-	return max+s.processed.load() >= s.nextOffset.load()+sizeWithHeader
+	return max+s.processed.load() >= s.nextOffset+sizeWithHeader
 }
 
 func (s *commandListStore) stopWait() {

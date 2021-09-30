@@ -6,8 +6,7 @@ lint:
 	revive -config revive.toml -formatter friendly ./...
 
 test:
-	go test -v -tags integration ./...
-
+	go test -race -count=1 ./...
 
 install-tools:
 	go install github.com/matryer/moq
