@@ -14,11 +14,9 @@ func newCommandListStore() *commandListStore {
 
 func TestCommandListStore_AppendCommands_Single(t *testing.T) {
 	p := newCommandListStore()
-	assert.Equal(t, uint64(0), p.nextOffset)
 	p.appendCommands(net.IPv4(192, 168, 0, 1), 8100, []byte("some-data"))
 
-	cmdList, completedOffset := p.getNextRawCommandList()
-	assert.Equal(t, uint64(dataOffset+len("some-data")), completedOffset)
+	cmdList, _ := p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
 		ip:   net.IPv4(192, 168, 0, 1).To4(),
 		port: 8100,

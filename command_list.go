@@ -1,10 +1,10 @@
 package kvstore
 
 import (
-	"encoding/binary"
 	"net"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 type commandListStore struct {
@@ -14,17 +14,32 @@ type commandListStore struct {
 	buffer     []byte
 	nextOffset uint64
 	processed  uint64
+
+	currentCommandData []byte
 }
+
+type commandListHeader struct {
+	ip     [4]byte
+	port   uint16
+	length uint16
+}
+
+const commandListHeaderSize = uint64(unsafe.Sizeof(commandListHeader{}))
 
 func initCommandListStore(s *commandListStore, bufSize int) {
 	s.buffer = make([]byte, bufSize)
+	s.currentCommandData = make([]byte, 1<<16) // 64KB
 	s.cond = sync.NewCond(&s.mut)
 }
 
-func (s *commandListStore) computeSlice(n uint16) []byte {
+func (s *commandListStore) appendBytes(data []byte) {
 	begin := s.nextOffset
-	end := begin + dataOffset + uint64(n)
-	return s.buffer[begin:end]
+	copy(s.buffer[begin:], data)
+	s.nextOffset += uint64(len(data))
+}
+
+func (s *commandListStore) readAt(data []byte, pos uint64) {
+	copy(data, s.buffer[pos:])
 }
 
 func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
@@ -32,12 +47,14 @@ func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
 
 	length := uint16(len(data))
 
-	slice := s.computeSlice(length)
-	copy(slice, ip.To4())
-	binary.LittleEndian.PutUint16(slice[portOffset:], port)
-	binary.LittleEndian.PutUint16(slice[lengthOffset:], length)
-	copy(slice[dataOffset:], data)
-	s.nextOffset += uint64(len(slice))
+	var headerData [commandListHeaderSize]byte
+	header := (*commandListHeader)(unsafe.Pointer(&headerData[0]))
+	copy(header.ip[:], ip.To4())
+	header.port = port
+	header.length = length
+
+	s.appendBytes(headerData[:])
+	s.appendBytes(data)
 
 	s.mut.Unlock()
 	s.cond.Signal()
@@ -46,18 +63,17 @@ func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
 func (s *commandListStore) getNextRawCommandList() (rawCommandList, uint64) {
 	begin := s.processed
 
-	slice := s.buffer[begin:]
+	var headerData [commandListHeaderSize]byte
+	s.readAt(headerData[:], begin)
+	header := (*commandListHeader)(unsafe.Pointer(&headerData[0]))
 
-	ip := slice[:net.IPv4len]
-	port := binary.LittleEndian.Uint16(slice[portOffset : portOffset+2])
-	length := binary.LittleEndian.Uint16(slice[lengthOffset : lengthOffset+2])
-	data := slice[dataOffset : dataOffset+uint64(length)]
+	s.readAt(s.currentCommandData[:header.length], begin+commandListHeaderSize)
 
 	return rawCommandList{
-		ip:   ip,
-		port: port,
-		data: data,
-	}, begin + dataOffset + uint64(length)
+		ip:   header.ip[:],
+		port: header.port,
+		data: s.currentCommandData[:header.length],
+	}, begin + commandListHeaderSize + uint64(header.length)
 }
 
 func (s *commandListStore) commitProcessedOffset(value uint64) {

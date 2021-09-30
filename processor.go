@@ -41,10 +41,6 @@ func newProcessor(
 	return p
 }
 
-const portOffset = net.IPv4len
-const lengthOffset = portOffset + 2
-const dataOffset = lengthOffset + 2
-
 type rawCommandList struct {
 	ip   net.IP
 	port uint16
