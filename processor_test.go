@@ -44,35 +44,30 @@ func TestBuildGetResponse_Granted_Normal(t *testing.T) {
 }
 
 func (p *processor) perform(
-	ip net.IP, port uint16, requestID uint64, action string,
+	ip net.IP, port uint16, startRequestID uint64,
+	actionList ...string,
 ) {
 	data := make([]byte, 1000)
-	buildDataFrameEntryHeader(data, requestID, len(action))
-	offset := entryDataOffset
 
-	copy(data[offset:], action)
-	offset += len(action)
+	offset := 0
+	for _, action := range actionList {
+		buildDataFrameEntryHeader(data[offset:], startRequestID, len(action))
+		offset += entryDataOffset
 
+		copy(data[offset:], action)
+		offset += len(action)
+
+		startRequestID++
+	}
 	p.appendCommands(ip, port, data[:offset])
 }
 
-func buildEntryForTest(requestID uint64, s string) []byte {
-	data := make([]byte, 1000)
-	buildDataFrameEntryHeader(data, requestID, len(s))
-	offset := entryDataOffset
-
-	copy(data[offset:], s)
-	offset += len(s)
-
-	return data[:offset]
-}
-
-func TestProcessor_RunSingleLoop(t *testing.T) {
+func TestProcessor_RunSingleLoop_Single_Command(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
 	p.perform(newIPv4(192, 168, 1, 23),
-		7200, 200, "LGET key01\r\n")
+		7200, 213, "LGET key01\r\n")
 
 	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
 	p.runSingleLoop()
@@ -80,5 +75,37 @@ func TestProcessor_RunSingleLoop(t *testing.T) {
 	assert.Equal(t, 1, len(sender.SendCalls()))
 	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
-	assert.Equal(t, buildEntryForTest(200, "GRANTED 1\r\n"), sender.SendCalls()[0].Data)
+
+	requestID, data, _ := parseDataFrameEntry(sender.SendCalls()[0].Data)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
+}
+
+func TestProcessor_RunSingleLoop_Multi_Commands(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender)
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+		"LGET key02\r\n",
+	)
+
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	p.runSingleLoop()
+
+	assert.Equal(t, 1, len(sender.SendCalls()))
+	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
+
+	sendData := sender.SendCalls()[0].Data
+
+	requestID, data, offset := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
+
+	sendData = sendData[offset:]
+	requestID, data, offset = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(214), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
 }

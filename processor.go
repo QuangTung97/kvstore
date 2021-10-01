@@ -87,7 +87,7 @@ func (p *processor) runSingleLoop() bool {
 		if nextOffset >= len(data) {
 			break
 		}
-		// TODO next data
+		data = data[nextOffset:]
 	}
 
 	p.sendResponse()
