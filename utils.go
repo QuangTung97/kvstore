@@ -59,32 +59,23 @@ func buildDataFrameHeader(data []byte, header dataFrameHeader) int {
 	return dataFrameEntryListOffset
 }
 
-func buildDataFrameEntry(dest []byte, requestID uint64, data []byte) int {
+const entryDataOffset = 12
+
+func buildDataFrameEntryHeader(dest []byte, requestID uint64, dataSize int) {
 	binary.LittleEndian.PutUint64(dest, requestID)
-	dataLen := len(data)
-	offset := 8
-	size := binary.PutUvarint(dest[offset:], uint64(dataLen))
-	offset += size
-	copy(dest[offset:], data)
-	return offset + dataLen
+	binary.LittleEndian.PutUint32(dest[8:], uint32(dataSize))
 }
 
 // return nil, 0 when error occurs
 func parseDataFrameEntry(data []byte) (uint64, []byte, int) {
-	if len(data) < 8 {
+	if len(data) < entryDataOffset {
 		return 0, nil, 0
 	}
 
 	requestID := binary.LittleEndian.Uint64(data)
-	data = data[8:]
-
-	readLen, offset := binary.Uvarint(data)
-	if readLen <= 0 {
+	dataLen := int(binary.LittleEndian.Uint32(data[8:]))
+	if entryDataOffset+dataLen > len(data) {
 		return 0, nil, 0
 	}
-	dataLen := int(readLen)
-	if offset+dataLen > len(data) {
-		return 0, nil, 0
-	}
-	return requestID, data[offset : offset+dataLen], 8 + offset + dataLen
+	return requestID, data[entryDataOffset : entryDataOffset+dataLen], entryDataOffset + dataLen
 }

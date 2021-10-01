@@ -101,26 +101,23 @@ func TestBuildDataFrameHeader_Fragmented(t *testing.T) {
 	}, data)
 }
 
-func TestBuildDataFrameEntry(t *testing.T) {
-	data := make([]byte, 16)
-	nextOffset := buildDataFrameEntry(data, 102, []byte("abcd123"))
-	assert.Equal(t, byte(7), data[8])
-	assert.Equal(t, []byte("abcd123"), data[9:])
-	assert.Equal(t, 16, nextOffset)
-}
-
 func TestParseDataFrameEntry(t *testing.T) {
 	data := make([]byte, 1000)
-	buildDataFrameEntry(data, 102, []byte(strings.Repeat("A", 600)))
+
+	buildDataFrameEntryHeader(data, 102, 600)
+	copy(data[entryDataOffset:], strings.Repeat("A", 600))
+
 	requestID, content, nextOffset := parseDataFrameEntry(data)
 	assert.Equal(t, uint64(102), requestID)
 	assert.Equal(t, []byte(strings.Repeat("A", 600)), content)
-	assert.Equal(t, 610, nextOffset)
+	assert.Equal(t, 612, nextOffset)
 }
 
-func TestParseDataFrameEntry_Missing_RequestID(t *testing.T) {
+func TestParseDataFrameEntry_Missing_Length(t *testing.T) {
 	data := []byte{
 		0x13, 0, 0, 0,
+		0, 0, 0, 0,
+		1, 0, 0,
 	}
 	requestID, content, nextOffset := parseDataFrameEntry(data)
 	assert.Equal(t, uint64(0), requestID)
@@ -128,23 +125,12 @@ func TestParseDataFrameEntry_Missing_RequestID(t *testing.T) {
 	assert.Equal(t, 0, nextOffset)
 }
 
-func TestParseDataFrameEntry_Error_While_Read_VarUint(t *testing.T) {
+func TestParseDataFrameEntry_Missing_Data(t *testing.T) {
 	data := []byte{
 		0x13, 0, 0, 0,
 		0, 0, 0, 0,
-		0xfa,
-	}
-	requestID, content, nextOffset := parseDataFrameEntry(data)
-	assert.Equal(t, uint64(0), requestID)
-	assert.Equal(t, []byte(nil), content)
-	assert.Equal(t, 0, nextOffset)
-}
-
-func TestParseDataFrameEntry_Error_Missing_Data(t *testing.T) {
-	data := []byte{
-		0x13, 0, 0, 0,
-		0, 0, 0, 0,
-		0x08, 0x02,
+		3, 0, 0, 0,
+		1, 2,
 	}
 	requestID, content, nextOffset := parseDataFrameEntry(data)
 	assert.Equal(t, uint64(0), requestID)

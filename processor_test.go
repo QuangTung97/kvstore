@@ -16,12 +16,55 @@ func newIPv4(a, b, c, d byte) net.IP {
 	return net.IPv4(a, b, c, d).To4()
 }
 
+func TestBuildGetResponse_Found(t *testing.T) {
+	data := make([]byte, 1000)
+	offset := buildGetResponse(data, lease.GetResult{
+		Status:    lease.GetStatusFound,
+		ValueSize: 1230,
+	}, []byte("some value"))
+	assert.Equal(t, []byte("OK 1230\r\nsome value\r\n"), data[:offset])
+}
+
+func TestBuildGetResponse_Granted_Lease_Zero(t *testing.T) {
+	data := make([]byte, 1000)
+	offset := buildGetResponse(data, lease.GetResult{
+		Status:  lease.GetStatusLeaseGranted,
+		LeaseID: 0,
+	}, nil)
+	assert.Equal(t, []byte("GRANTED 0\r\n"), data[:offset])
+}
+
+func TestBuildGetResponse_Granted_Normal(t *testing.T) {
+	data := make([]byte, 1000)
+	offset := buildGetResponse(data, lease.GetResult{
+		Status:  lease.GetStatusLeaseGranted,
+		LeaseID: 12340,
+	}, nil)
+	assert.Equal(t, []byte("GRANTED 12340\r\n"), data[:offset])
+}
+
 func (p *processor) perform(
 	ip net.IP, port uint16, requestID uint64, action string,
 ) {
 	data := make([]byte, 1000)
-	offset := buildDataFrameEntry(data, requestID, []byte(action))
+	buildDataFrameEntryHeader(data, requestID, len(action))
+	offset := entryDataOffset
+
+	copy(data[offset:], action)
+	offset += len(action)
+
 	p.appendCommands(ip, port, data[:offset])
+}
+
+func buildEntryForTest(requestID uint64, s string) []byte {
+	data := make([]byte, 1000)
+	buildDataFrameEntryHeader(data, requestID, len(s))
+	offset := entryDataOffset
+
+	copy(data[offset:], s)
+	offset += len(s)
+
+	return data[:offset]
 }
 
 func TestProcessor_RunSingleLoop(t *testing.T) {
@@ -35,4 +78,7 @@ func TestProcessor_RunSingleLoop(t *testing.T) {
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
+	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
+	assert.Equal(t, buildEntryForTest(200, "GRANTED 1\r\n"), sender.SendCalls()[0].Data)
 }

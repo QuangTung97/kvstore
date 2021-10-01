@@ -1,9 +1,9 @@
 package kvstore
 
 import (
-	"fmt"
 	"github.com/QuangTung97/kvstore/lease"
 	"github.com/QuangTung97/kvstore/parser"
+	"go.uber.org/zap"
 	"net"
 )
 
@@ -23,8 +23,14 @@ type processor struct {
 	cache  *lease.Cache
 	sender ResponseSender
 
+	currentIP        net.IP
+	currentPort      uint16
+	currentRequestID uint64
+
 	resultData []byte
-	sendFrame  []byte
+
+	sendData   []byte
+	sendOffset int
 }
 
 func newProcessor(
@@ -38,7 +44,7 @@ func newProcessor(
 		sender: sender,
 
 		resultData: make([]byte, buffSize),
-		sendFrame:  make([]byte, options.maxResultPackageSize),
+		sendData:   make([]byte, buffSize),
 	}
 	initCommandListStore(&p.cmdStore, buffSize)
 	parser.InitParser(&p.parser, p)
@@ -61,29 +67,109 @@ func (p *processor) runSingleLoop() bool {
 
 	cmdList, committedOffset := p.cmdStore.getNextRawCommandList()
 
+	p.currentIP = cmdList.ip
+	p.currentPort = cmdList.port
+
 	data := cmdList.data
 	for {
-		requestID, content, offset := parseDataFrameEntry(data)
+		requestID, content, nextOffset := parseDataFrameEntry(data)
 		if len(content) == 0 {
-			p.options.logger.Error("parseDataFrameEntry error")
 			return true
 		}
 
-		err := p.parser.Process(content)
-		fmt.Println(err)
-		fmt.Println(requestID)
+		p.currentRequestID = requestID
 
-		if offset >= len(data) {
+		err := p.parser.Process(content)
+		if err != nil {
+			// TODO error return
+		}
+
+		if nextOffset >= len(data) {
 			break
 		}
+		// TODO next data
 	}
+
+	p.sendResponse()
 
 	p.cmdStore.commitProcessedOffset(committedOffset)
 	return true
 }
 
+func (p *processor) sendResponse() {
+	err := p.sender.Send(p.currentIP, p.currentPort, p.sendData[:p.sendOffset])
+	if err != nil {
+		p.options.logger.Error("Send response error", zap.Error(err))
+		return
+	}
+}
+
+func buildResponseNumber(data []byte, num uint64) int {
+	if num == 0 {
+		data[0] = '0'
+		return 1
+	}
+
+	index := 0
+	for num > 0 {
+		c := byte(num % 10)
+		data[index] = c + '0'
+		index++
+		num = num / 10
+	}
+	for i := 0; i < index/2; i++ {
+		j := index - 1 - i
+		data[j], data[i] = data[i], data[j]
+	}
+	return index
+}
+
+var okResponse = []byte("OK ")
+var grantedResponse = []byte("GRANTED ")
+var crlfResponse = []byte("\r\n")
+
+func buildGetResponse(data []byte, result lease.GetResult, value []byte) int {
+	offset := 0
+
+	switch result.Status {
+	case lease.GetStatusLeaseGranted:
+		copy(data, grantedResponse)
+		offset = len(grantedResponse)
+
+		offset += buildResponseNumber(data[offset:], uint64(result.LeaseID))
+
+	case lease.GetStatusLeaseRejected:
+
+	default:
+		copy(data, okResponse)
+		offset = len(okResponse)
+
+		offset += buildResponseNumber(data[offset:], uint64(result.ValueSize))
+
+		copy(data[offset:], crlfResponse)
+		offset += len(crlfResponse)
+
+		copy(data[offset:], value)
+		offset += len(value)
+	}
+
+	copy(data[offset:], crlfResponse)
+	offset += len(crlfResponse)
+	return offset
+}
+
 func (p *processor) OnLGET(key []byte) {
-	fmt.Println("ON GET", key)
+	result := p.cache.Get(key, p.resultData)
+
+	offset := p.sendOffset + entryDataOffset
+
+	dataSize := buildGetResponse(p.sendData[offset:],
+		result, p.resultData[:result.ValueSize])
+	offset += dataSize
+
+	buildDataFrameEntryHeader(p.sendData[p.sendOffset:], p.currentRequestID, dataSize)
+
+	p.sendOffset = offset
 }
 
 func (p *processor) OnLSET(key []byte, leaseID uint32, value []byte) {
