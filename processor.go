@@ -1,7 +1,7 @@
 package kvstore
 
 import (
-	"github.com/QuangTung97/memtable"
+	"github.com/QuangTung97/bigcache"
 	"net"
 )
 
@@ -17,7 +17,7 @@ type processor struct {
 
 	cmdList commandListStore
 
-	cache  *memtable.Memtable
+	cache  *bigcache.Cache
 	sender ResponseSender
 
 	resultData []byte
@@ -25,7 +25,7 @@ type processor struct {
 }
 
 func newProcessor(
-	buffSize int, cache *memtable.Memtable,
+	buffSize int, cache *bigcache.Cache,
 	sender ResponseSender, options kvstoreOptions,
 ) *processor {
 	p := &processor{

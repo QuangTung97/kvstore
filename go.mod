@@ -3,7 +3,7 @@ module github.com/QuangTung97/kvstore
 go 1.16
 
 require (
-	github.com/QuangTung97/memtable v0.1.3
+	github.com/QuangTung97/bigcache v0.1.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/matryer/moq v0.2.3
 	github.com/mgechev/revive v1.1.1
