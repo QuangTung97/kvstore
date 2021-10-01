@@ -128,6 +128,7 @@ func TestCommandListStore_Stress_Test(t *testing.T) {
 
 			assert.Equal(t, net.IPv4(198, 168, 53, 1).To4(), cmdList.ip)
 			assert.Equal(t, uint16(8765), cmdList.port)
+			assert.Equal(t, []byte("command-no-"), cmdList.data[:len("command-no-")])
 			p.commitProcessedOffset(offset)
 
 			atomic.AddUint32(&count, 1)
