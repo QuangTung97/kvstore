@@ -12,6 +12,12 @@ type atomicUint64 struct {
 	value uint64
 }
 
+type rawCommandList struct {
+	ip   net.IP
+	port uint16
+	data []byte
+}
+
 func (a *atomicUint64) store(v uint64) {
 	atomic.StoreUint64(&a.value, v)
 }
@@ -124,6 +130,7 @@ func (s *commandListStore) getCommitProcessed() uint64 {
 	return s.processed.load()
 }
 
+// when stopped, return false
 func (s *commandListStore) waitAvailable() bool {
 	s.mut.Lock()
 	for s.nextOffset <= s.processed.load() && !s.stopped {

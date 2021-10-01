@@ -116,7 +116,7 @@ func TestCommandListStore_WaitAvailable_No_Command(t *testing.T) {
 func TestCommandListStore_Stress_Test(t *testing.T) {
 	p := newCommandListStoreBuffSize(197)
 
-	const numCommands = 10000
+	const numCommands = 1000
 	count := uint32(0)
 
 	var wg sync.WaitGroup
@@ -132,6 +132,7 @@ func TestCommandListStore_Stress_Test(t *testing.T) {
 			p.commitProcessedOffset(offset)
 
 			atomic.AddUint32(&count, 1)
+			time.Sleep(1 * time.Microsecond)
 		}
 	}()
 

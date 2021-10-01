@@ -47,33 +47,44 @@ func parseDataFrameHeader(data []byte) (header dataFrameHeader, nextOffset int) 
 	}, dataFrameEntryListOffset
 }
 
-func buildDataFrameHeader(data []byte, header dataFrameHeader) {
+func buildDataFrameHeader(data []byte, header dataFrameHeader) int {
 	if !header.fragmented {
 		binary.LittleEndian.PutUint64(data, header.batchID)
-		return
+		return dataFrameLengthOffset
 	}
 	batchID := header.batchID | fragmentedBitMask
 	binary.LittleEndian.PutUint64(data, batchID)
 	binary.LittleEndian.PutUint32(data[dataFrameLengthOffset:], header.length)
 	binary.LittleEndian.PutUint32(data[dataFrameOffsetFieldOffset:], header.offset)
+	return dataFrameEntryListOffset
 }
 
-func buildDataFrameEntry(dest []byte, data []byte) int {
+func buildDataFrameEntry(dest []byte, requestID uint64, data []byte) int {
+	binary.LittleEndian.PutUint64(dest, requestID)
 	dataLen := len(data)
-	size := binary.PutUvarint(dest, uint64(dataLen))
-	copy(dest[size:], data)
-	return size + dataLen
+	offset := 8
+	size := binary.PutUvarint(dest[offset:], uint64(dataLen))
+	offset += size
+	copy(dest[offset:], data)
+	return offset + dataLen
 }
 
 // return nil, 0 when error occurs
-func parseDataFrameEntry(data []byte) ([]byte, int) {
+func parseDataFrameEntry(data []byte) (uint64, []byte, int) {
+	if len(data) < 8 {
+		return 0, nil, 0
+	}
+
+	requestID := binary.LittleEndian.Uint64(data)
+	data = data[8:]
+
 	readLen, offset := binary.Uvarint(data)
 	if readLen <= 0 {
-		return nil, 0
+		return 0, nil, 0
 	}
 	dataLen := int(readLen)
 	if offset+dataLen > len(data) {
-		return nil, 0
+		return 0, nil, 0
 	}
-	return data[offset : offset+dataLen], offset + dataLen
+	return requestID, data[offset : offset+dataLen], 8 + offset + dataLen
 }
