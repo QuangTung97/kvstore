@@ -69,11 +69,13 @@ func (p *processor) runSingleLoop() bool {
 
 	p.currentIP = cmdList.ip
 	p.currentPort = cmdList.port
+	p.sendOffset = 0
 
 	data := cmdList.data
 	for {
 		requestID, content, nextOffset := parseDataFrameEntry(data)
 		if len(content) == 0 {
+			// TODO error handling
 			return true
 		}
 
@@ -81,7 +83,8 @@ func (p *processor) runSingleLoop() bool {
 
 		err := p.parser.Process(content)
 		if err != nil {
-			// TODO error return
+			// TODO error handling
+			continue
 		}
 
 		if nextOffset >= len(data) {
@@ -126,6 +129,7 @@ func buildResponseNumber(data []byte, num uint64) int {
 
 var okResponse = []byte("OK ")
 var grantedResponse = []byte("GRANTED ")
+var rejectedResponse = []byte("REJECTED")
 var crlfResponse = []byte("\r\n")
 
 func buildGetResponse(data []byte, result lease.GetResult, value []byte) int {
@@ -139,6 +143,8 @@ func buildGetResponse(data []byte, result lease.GetResult, value []byte) int {
 		offset += buildResponseNumber(data[offset:], uint64(result.LeaseID))
 
 	case lease.GetStatusLeaseRejected:
+		copy(data, rejectedResponse)
+		offset = len(rejectedResponse)
 
 	default:
 		copy(data, okResponse)
@@ -158,13 +164,27 @@ func buildGetResponse(data []byte, result lease.GetResult, value []byte) int {
 	return offset
 }
 
-func (p *processor) OnLGET(key []byte) {
-	result := p.cache.Get(key, p.resultData)
+//revive:disable-next-line:flag-parameter
+func buildOKResponse(data []byte, affected bool) int {
+	num := uint64(0)
+	if affected {
+		num = 1
+	}
+	copy(data, okResponse)
+	offset := len(okResponse)
 
+	offset += buildResponseNumber(data[offset:], num)
+
+	copy(data[offset:], crlfResponse)
+	offset += len(crlfResponse)
+
+	return offset
+}
+
+func (p *processor) onCommand(builder func(data []byte) int) {
 	offset := p.sendOffset + entryDataOffset
 
-	dataSize := buildGetResponse(p.sendData[offset:],
-		result, p.resultData[:result.ValueSize])
+	dataSize := builder(p.sendData[offset:])
 	offset += dataSize
 
 	buildDataFrameEntryHeader(p.sendData[p.sendOffset:], p.currentRequestID, dataSize)
@@ -172,10 +192,26 @@ func (p *processor) OnLGET(key []byte) {
 	p.sendOffset = offset
 }
 
-func (p *processor) OnLSET(key []byte, leaseID uint32, value []byte) {
+func (p *processor) OnLGET(key []byte) {
+	result := p.cache.Get(key, p.resultData)
 
+	p.onCommand(func(data []byte) int {
+		return buildGetResponse(data, result, p.resultData[:result.ValueSize])
+	})
+}
+
+func (p *processor) OnLSET(key []byte, leaseID uint32, value []byte) {
+	affected := p.cache.Set(key, leaseID, value)
+
+	p.onCommand(func(data []byte) int {
+		return buildOKResponse(data, affected)
+	})
 }
 
 func (p *processor) OnDEL(key []byte) {
+	affected := p.cache.Invalidate(key)
 
+	p.onCommand(func(data []byte) int {
+		return buildOKResponse(data, affected)
+	})
 }

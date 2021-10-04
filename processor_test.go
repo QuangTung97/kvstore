@@ -70,7 +70,8 @@ func TestProcessor_RunSingleLoop_Single_Command(t *testing.T) {
 		7200, 213, "LGET key01\r\n")
 
 	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
-	p.runSingleLoop()
+	continued := p.runSingleLoop()
+	assert.Equal(t, true, continued)
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
 	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
@@ -108,4 +109,151 @@ func TestProcessor_RunSingleLoop_Multi_Commands(t *testing.T) {
 	requestID, data, offset = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(214), requestID)
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
+}
+
+func TestProcessor_RunSingleLoop_LGET_Rejected(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender)
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+		"LGET key01\r\n",
+	)
+
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	p.runSingleLoop()
+
+	assert.Equal(t, 1, len(sender.SendCalls()))
+	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
+
+	sendData := sender.SendCalls()[0].Data
+
+	requestID, data, offset := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, "GRANTED 1\r\n", string(data))
+
+	sendData = sendData[offset:]
+	requestID, data, offset = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(214), requestID)
+	assert.Equal(t, "REJECTED\r\n", string(data))
+}
+
+func TestProcessor_RunSingleLoop_SET_OK(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender)
+
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+	)
+
+	p.runSingleLoop()
+
+	assert.Equal(t, 1, len(sender.SendCalls()))
+
+	sendData := sender.SendCalls()[0].Data
+
+	requestID, data, _ := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 220,
+		"LSET key01 1 10\r\nsome-value\r\n",
+	)
+
+	p.runSingleLoop()
+	assert.Equal(t, 2, len(sender.SendCalls()))
+
+	sendData = sender.SendCalls()[1].Data
+	requestID, data, _ = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(220), requestID)
+	assert.Equal(t, "OK 1\r\n", string(data))
+}
+
+func TestProcessor_RunSingleLoop_SET_Not_Affected(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender)
+
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+	)
+
+	p.runSingleLoop()
+
+	assert.Equal(t, 1, len(sender.SendCalls()))
+
+	sendData := sender.SendCalls()[0].Data
+
+	requestID, data, _ := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 220,
+		"LSET key01 2 10\r\nsome-value\r\n",
+	)
+
+	p.runSingleLoop()
+	assert.Equal(t, 2, len(sender.SendCalls()))
+
+	sendData = sender.SendCalls()[1].Data
+	requestID, data, _ = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(220), requestID)
+	assert.Equal(t, "OK 0\r\n", string(data))
+}
+
+func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender)
+
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+
+	// LGET
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+	)
+
+	p.runSingleLoop()
+
+	sendData := sender.SendCalls()[0].Data
+	requestID, data, _ := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(213), requestID)
+	assert.Equal(t, string(data), "GRANTED 1\r\n")
+
+	// LSET
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 220,
+		"LSET key01 1 10\r\nsome-value\r\n",
+	)
+
+	p.runSingleLoop()
+
+	sendData = sender.SendCalls()[1].Data
+	requestID, data, _ = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(220), requestID)
+	assert.Equal(t, "OK 1\r\n", string(data))
+
+	// DEL
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 230,
+		"DEL key01\r\n",
+	)
+
+	p.runSingleLoop()
+
+	sendData = sender.SendCalls()[2].Data
+	requestID, data, _ = parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(230), requestID)
+	assert.Equal(t, "OK 1\r\n", string(data))
+
+	assert.Equal(t, 3, len(sender.SendCalls()))
 }
