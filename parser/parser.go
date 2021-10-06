@@ -1,6 +1,8 @@
 package parser
 
-import "errors"
+import (
+	"errors"
+)
 
 //go:generate moq -out parser_mocks_test.go . CommandHandler
 
@@ -19,6 +21,24 @@ var ErrInvalidCommand = errors.New("invalid command")
 
 // ErrMissingKey ...
 var ErrMissingKey = errors.New("missing key")
+
+// ErrMissingCRLF ...
+var ErrMissingCRLF = errors.New("missing CRLF")
+
+// ErrMissingLease ...
+var ErrMissingLease = errors.New("missing lease")
+
+// ErrLeaseNotNumber ...
+var ErrLeaseNotNumber = errors.New("lease is not number")
+
+// ErrMissingSize ...
+var ErrMissingSize = errors.New("missing size")
+
+// ErrSizeNotNumber ...
+var ErrSizeNotNumber = errors.New("size is not number")
+
+// ErrMissingData ...
+var ErrMissingData = errors.New("missing data")
 
 // Parser ...
 type Parser struct {
@@ -55,7 +75,7 @@ func (p *Parser) Process(data []byte) error {
 	case tokenTypeLGET:
 		return p.processLGET(data)
 	case tokenTypeLSET:
-		p.processLSET(data)
+		return p.processLSET(data)
 	case tokenTypeDEL:
 		p.processDEL(data)
 	case tokenTypeCRLF:
@@ -81,13 +101,42 @@ func (p *Parser) processLGET(data []byte) error {
 	if len(tokens) < 2 || !tokenTypeIsString(tokens[1].tokenType) {
 		return ErrMissingKey
 	}
+	if len(tokens) < 3 || tokens[2].tokenType != tokenTypeCRLF {
+		return ErrMissingCRLF
+	}
 
 	p.handler.OnLGET(tokens[1].getData(data))
 	return nil
 }
 
-func (p *Parser) processLSET(data []byte) {
+func validateLSETControlTokens(tokens []token) error {
+	if len(tokens) < 2 {
+		return ErrMissingKey
+	}
+	if len(tokens) < 3 {
+		return ErrMissingLease
+	}
+	if tokens[2].tokenType != tokenTypeInt {
+		return ErrLeaseNotNumber
+	}
+	if len(tokens) < 4 {
+		return ErrMissingSize
+	}
+	if tokens[3].tokenType != tokenTypeInt {
+		return ErrSizeNotNumber
+	}
+	if len(tokens) < 5 || tokens[4].tokenType != tokenTypeCRLF {
+		return ErrMissingCRLF
+	}
+	return nil
+}
+
+func (p *Parser) processLSET(data []byte) error {
 	tokens := p.scanner.tokens
+	err := validateLSETControlTokens(tokens)
+	if err != nil {
+		return err
+	}
 
 	key := tokens[1].getData(data)
 	lease := bytesToUint32(tokens[2].getData(data))
@@ -95,11 +144,22 @@ func (p *Parser) processLSET(data []byte) {
 
 	beginValueOffset := tokens[4].end
 	data = data[beginValueOffset:]
+
+	if len(data) < int(size) {
+		return ErrMissingData
+	}
+
 	p.scanner.reset()
 	p.scanner.scanBinary(int(size), data)
-	value := p.scanner.tokens[0].getData(data)
+
+	tokens = p.scanner.tokens
+	if len(tokens) < 2 || tokens[1].tokenType != tokenTypeCRLF {
+		return ErrMissingCRLF
+	}
+	value := tokens[0].getData(data)
 
 	p.handler.OnLSET(key, lease, value)
+	return nil
 }
 
 func (p *Parser) processDEL(data []byte) {
