@@ -220,4 +220,38 @@ func TestParser_LSET_Wrong_Data_CRLF(t *testing.T) {
 	assert.Equal(t, errors.New("missing CRLF"), err)
 }
 
-// TODO Validate DEL
+func TestParser_DEL_Missing_Key(t *testing.T) {
+	handler := &CommandHandlerMock{}
+	p := newParser(handler)
+
+	err := p.Process([]byte("DEL"))
+
+	assert.Equal(t, errors.New("missing key"), err)
+}
+
+func TestParser_DEL_Missing_Key_With_CRLF(t *testing.T) {
+	handler := &CommandHandlerMock{}
+	p := newParser(handler)
+
+	err := p.Process([]byte("DEL \r\n"))
+
+	assert.Equal(t, errors.New("missing key"), err)
+}
+
+func TestParser_DEL_Missing_CRLF(t *testing.T) {
+	handler := &CommandHandlerMock{}
+	p := newParser(handler)
+
+	err := p.Process([]byte("DEL 1234"))
+
+	assert.Equal(t, errors.New("missing CRLF"), err)
+}
+
+func TestParser_DEL_Missing_CRLF_Replaced_By_Ident(t *testing.T) {
+	handler := &CommandHandlerMock{}
+	p := newParser(handler)
+
+	err := p.Process([]byte("DEL 1234 another"))
+
+	assert.Equal(t, errors.New("missing CRLF"), err)
+}

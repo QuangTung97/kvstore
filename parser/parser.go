@@ -77,13 +77,12 @@ func (p *Parser) Process(data []byte) error {
 	case tokenTypeLSET:
 		return p.processLSET(data)
 	case tokenTypeDEL:
-		p.processDEL(data)
+		return p.processDEL(data)
 	case tokenTypeCRLF:
 		return ErrMissingCommand
 	default:
 		return ErrInvalidCommand
 	}
-	return nil
 }
 
 func tokenTypeIsString(t tokenType) bool {
@@ -162,7 +161,14 @@ func (p *Parser) processLSET(data []byte) error {
 	return nil
 }
 
-func (p *Parser) processDEL(data []byte) {
+func (p *Parser) processDEL(data []byte) error {
 	tokens := p.scanner.tokens
+	if len(tokens) < 2 || !tokenTypeIsString(tokens[1].tokenType) {
+		return ErrMissingKey
+	}
+	if len(tokens) < 3 || tokens[2].tokenType != tokenTypeCRLF {
+		return ErrMissingCRLF
+	}
 	p.handler.OnDEL(tokens[1].getData(data))
+	return nil
 }
