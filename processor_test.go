@@ -4,6 +4,7 @@ import (
 	"github.com/QuangTung97/kvstore/lease"
 	"github.com/stretchr/testify/assert"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,13 @@ func (p *processor) perform(
 	p.appendCommands(ip, port, data[:offset])
 }
 
+func checkAndGetSendData(t *testing.T, data []byte, batchID uint64) []byte {
+	t.Helper()
+	header, nextOffset := parseDataFrameHeader(data)
+	assert.Equal(t, dataFrameHeader{batchID: batchID}, header)
+	return data[nextOffset:]
+}
+
 func TestProcessor_RunSingleLoop_Single_Command(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
@@ -77,7 +85,9 @@ func TestProcessor_RunSingleLoop_Single_Command(t *testing.T) {
 	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
-	requestID, data, _ := parseDataFrameEntry(sender.SendCalls()[0].Data)
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
+
+	requestID, data, _ := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
 }
@@ -99,7 +109,7 @@ func TestProcessor_RunSingleLoop_Multi_Commands(t *testing.T) {
 	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
-	sendData := sender.SendCalls()[0].Data
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
 
 	requestID, data, offset := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
@@ -128,7 +138,7 @@ func TestProcessor_RunSingleLoop_LGET_Rejected(t *testing.T) {
 	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
-	sendData := sender.SendCalls()[0].Data
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
 
 	requestID, data, offset := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
@@ -150,12 +160,11 @@ func TestProcessor_RunSingleLoop_SET_OK(t *testing.T) {
 		7200, 213,
 		"LGET key01\r\n",
 	)
-
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
 
-	sendData := sender.SendCalls()[0].Data
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
 
 	requestID, data, _ := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
@@ -165,11 +174,11 @@ func TestProcessor_RunSingleLoop_SET_OK(t *testing.T) {
 		7200, 220,
 		"LSET key01 1 10\r\nsome-value\r\n",
 	)
-
 	p.runSingleLoop()
 	assert.Equal(t, 2, len(sender.SendCalls()))
 
-	sendData = sender.SendCalls()[1].Data
+	sendData = checkAndGetSendData(t, sender.SendCalls()[1].Data, 2)
+
 	requestID, data, _ = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(220), requestID)
 	assert.Equal(t, "OK 1\r\n", string(data))
@@ -185,12 +194,11 @@ func TestProcessor_RunSingleLoop_SET_Not_Affected(t *testing.T) {
 		7200, 213,
 		"LGET key01\r\n",
 	)
-
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
 
-	sendData := sender.SendCalls()[0].Data
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
 
 	requestID, data, _ := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
@@ -200,11 +208,11 @@ func TestProcessor_RunSingleLoop_SET_Not_Affected(t *testing.T) {
 		7200, 220,
 		"LSET key01 2 10\r\nsome-value\r\n",
 	)
-
 	p.runSingleLoop()
 	assert.Equal(t, 2, len(sender.SendCalls()))
 
-	sendData = sender.SendCalls()[1].Data
+	sendData = checkAndGetSendData(t, sender.SendCalls()[1].Data, 2)
+
 	requestID, data, _ = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(220), requestID)
 	assert.Equal(t, "OK 0\r\n", string(data))
@@ -221,10 +229,9 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 		7200, 213,
 		"LGET key01\r\n",
 	)
-
 	p.runSingleLoop()
 
-	sendData := sender.SendCalls()[0].Data
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
 	requestID, data, _ := parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(213), requestID)
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
@@ -234,10 +241,9 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 		7200, 220,
 		"LSET key01 1 10\r\nsome-value\r\n",
 	)
-
 	p.runSingleLoop()
 
-	sendData = sender.SendCalls()[1].Data
+	sendData = checkAndGetSendData(t, sender.SendCalls()[1].Data, 2)
 	requestID, data, _ = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(220), requestID)
 	assert.Equal(t, "OK 1\r\n", string(data))
@@ -247,13 +253,59 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 		7200, 230,
 		"DEL key01\r\n",
 	)
-
 	p.runSingleLoop()
 
-	sendData = sender.SendCalls()[2].Data
+	sendData = checkAndGetSendData(t, sender.SendCalls()[2].Data, 3)
 	requestID, data, _ = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(230), requestID)
 	assert.Equal(t, "OK 1\r\n", string(data))
 
 	assert.Equal(t, 3, len(sender.SendCalls()))
+}
+
+func cloneBytes(a []byte) []byte {
+	result := make([]byte, len(a))
+	copy(result, a)
+	return result
+}
+
+func TestProcessor_RunSingleLoop_LGET_OK_Exceed_ResultPackageSize(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	p := newProcessorForTest(sender, WithMaxResultPackageSize(32))
+	p.cache.GetUnsafeInnerCache().Put([]byte("key01"), []byte(strings.Repeat("A", 9)))
+
+	p.perform(newIPv4(192, 168, 1, 23),
+		7200, 213,
+		"LGET key01\r\n",
+	)
+
+	var sendDataList [][]byte
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error {
+		sendDataList = append(sendDataList, cloneBytes(data))
+		return nil
+	}
+	p.runSingleLoop()
+
+	assert.Equal(t, 2, len(sender.SendCalls()))
+
+	resp := "OK 9\r\nAAAAAAAAA\r\n"
+	assert.Equal(t, 17, len(resp))
+
+	header, dataOffset := parseDataFrameHeader(sendDataList[0])
+	assert.Equal(t, dataFrameHeader{
+		batchID:    1,
+		fragmented: true,
+		length:     uint32(len(resp)) + entryDataOffset,
+		offset:     0,
+	}, header)
+	assert.Equal(t, 16, dataOffset)
+
+	header, dataOffset = parseDataFrameHeader(sendDataList[1])
+	assert.Equal(t, dataFrameHeader{
+		batchID:    1,
+		fragmented: true,
+		length:     uint32(len(resp)) + entryDataOffset,
+		offset:     32 - 16,
+	}, header)
+	assert.Equal(t, 16, dataOffset)
 }

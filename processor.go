@@ -31,6 +31,9 @@ type processor struct {
 
 	sendData   []byte
 	sendOffset int
+
+	sendFrame      []byte
+	currentBatchID uint64
 }
 
 func newProcessor(
@@ -43,8 +46,10 @@ func newProcessor(
 		cache:  cache,
 		sender: sender,
 
-		resultData: make([]byte, buffSize),
-		sendData:   make([]byte, buffSize),
+		resultData:     make([]byte, buffSize),
+		sendData:       make([]byte, buffSize),
+		sendFrame:      make([]byte, options.maxResultPackageSize),
+		currentBatchID: 0,
 	}
 	initCommandListStore(&p.cmdStore, buffSize)
 	parser.InitParser(&p.parser, p)
@@ -99,11 +104,54 @@ func (p *processor) runSingleLoop() bool {
 	return true
 }
 
-func (p *processor) sendResponse() {
-	err := p.sender.Send(p.currentIP, p.currentPort, p.sendData[:p.sendOffset])
+func (p *processor) sendResultFrame(data []byte) {
+	err := p.sender.Send(p.currentIP, p.currentPort, data)
 	if err != nil {
 		p.options.logger.Error("Send response error", zap.Error(err))
 		return
+	}
+}
+
+func (p *processor) sendResponse() {
+	p.currentBatchID++
+
+	length := p.sendOffset
+	data := p.sendData[:length]
+	offset := uint32(0)
+	sendFrameLen := len(p.sendFrame)
+
+	if length+dataFrameLengthOffset <= sendFrameLen {
+		nextOffset := buildDataFrameHeader(p.sendFrame, dataFrameHeader{
+			batchID:    p.currentBatchID,
+			fragmented: false,
+		})
+
+		copy(p.sendFrame[nextOffset:], data)
+		nextOffset += length
+		p.sendResultFrame(p.sendFrame[:nextOffset])
+		return
+	}
+
+	for len(data) > 0 {
+		nextOffset := buildDataFrameHeader(p.sendFrame, dataFrameHeader{
+			batchID:    p.currentBatchID,
+			fragmented: true,
+			length:     uint32(length),
+			offset:     offset,
+		})
+
+		dataLen := len(data)
+		if nextOffset+len(data) > sendFrameLen {
+			dataLen = sendFrameLen - nextOffset
+		}
+
+		copy(p.sendFrame[nextOffset:], data)
+		nextOffset += dataLen
+
+		p.sendResultFrame(p.sendFrame[:nextOffset])
+
+		data = data[dataLen:]
+		offset += uint32(dataLen)
 	}
 }
 

@@ -59,6 +59,9 @@ func buildDataFrameHeader(data []byte, header dataFrameHeader) int {
 	return dataFrameEntryListOffset
 }
 
+// 8 byte request id
+// 4 byte data size
+// follow by actual data
 const entryDataOffset = 12
 
 func buildDataFrameEntryHeader(dest []byte, requestID uint64, dataSize int) {
