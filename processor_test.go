@@ -3,6 +3,7 @@ package kvstore
 import (
 	"github.com/QuangTung97/kvstore/lease"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 	"net"
 	"strings"
 	"testing"
@@ -255,12 +256,12 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 	)
 	p.runSingleLoop()
 
+	assert.Equal(t, 3, len(sender.SendCalls()))
+
 	sendData = checkAndGetSendData(t, sender.SendCalls()[2].Data, 3)
 	requestID, data, _ = parseDataFrameEntry(sendData)
 	assert.Equal(t, uint64(230), requestID)
 	assert.Equal(t, "OK 1\r\n", string(data))
-
-	assert.Equal(t, 3, len(sender.SendCalls()))
 }
 
 func cloneBytes(a []byte) []byte {
@@ -308,4 +309,34 @@ func TestProcessor_RunSingleLoop_LGET_OK_Exceed_ResultPackageSize(t *testing.T) 
 		offset:     32 - 16,
 	}, header)
 	assert.Equal(t, 16, dataOffset)
+}
+
+func TestProcessor_RunSingleLoop_ParseDataFrameEntry_Error(t *testing.T) {
+	sender := &ResponseSenderMock{}
+
+	logger, err := zap.NewDevelopment()
+	assert.Equal(t, nil, err)
+
+	p := newProcessorForTest(sender, WithLogger(logger))
+
+	ip := newIPv4(192, 168, 1, 12)
+	p.appendCommands(ip, 7200, []byte{1, 2})
+
+	p.runSingleLoop()
+}
+
+func TestProcessor_RunSingleLoop_LGET_Missing_Key(t *testing.T) {
+	sender := &ResponseSenderMock{}
+	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+
+	p := newProcessorForTest(sender)
+	p.perform(newIPv4(192, 168, 1, 2), 8200, 10, "LGET\r\n")
+	p.runSingleLoop()
+
+	assert.Equal(t, 1, len(sender.SendCalls()))
+
+	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
+	requestID, data, _ := parseDataFrameEntry(sendData)
+	assert.Equal(t, uint64(10), requestID)
+	assert.Equal(t, "ERROR missing key\r\n", string(data))
 }

@@ -77,10 +77,10 @@ func (p *processor) runSingleLoop() bool {
 	p.sendOffset = 0
 
 	data := cmdList.data
-	for {
+	for len(data) > 0 {
 		requestID, content, nextOffset := parseDataFrameEntry(data)
 		if len(content) == 0 {
-			// TODO error handling
+			p.options.logger.Error("Invalid data frame entry")
 			return true
 		}
 
@@ -88,12 +88,9 @@ func (p *processor) runSingleLoop() bool {
 
 		err := p.parser.Process(content)
 		if err != nil {
-			// TODO error handling
-			continue
-		}
-
-		if nextOffset >= len(data) {
-			break
+			p.onCommand(func(data []byte) int {
+				return buildErrorResponse(data, err.Error())
+			})
 		}
 		data = data[nextOffset:]
 	}
@@ -179,6 +176,7 @@ var okResponse = []byte("OK ")
 var grantedResponse = []byte("GRANTED ")
 var rejectedResponse = []byte("REJECTED")
 var crlfResponse = []byte("\r\n")
+var errorResponse = []byte("ERROR ")
 
 func buildGetResponse(data []byte, result lease.GetResult, value []byte) int {
 	offset := 0
@@ -222,6 +220,19 @@ func buildOKResponse(data []byte, affected bool) int {
 	offset := len(okResponse)
 
 	offset += buildResponseNumber(data[offset:], num)
+
+	copy(data[offset:], crlfResponse)
+	offset += len(crlfResponse)
+
+	return offset
+}
+
+func buildErrorResponse(data []byte, errMsg string) int {
+	copy(data, errorResponse)
+	offset := len(errorResponse)
+
+	copy(data[offset:], errMsg)
+	offset += len(errMsg)
 
 	copy(data[offset:], crlfResponse)
 	offset += len(crlfResponse)
