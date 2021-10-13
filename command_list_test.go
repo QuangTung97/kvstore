@@ -23,6 +23,13 @@ func newCommandListStoreBuffSize(buffSize int) *commandListStore {
 	return s
 }
 
+func newIPAddr(a, b, c, d byte) ipAddr {
+	ip := net.IPv4(a, b, c, d).To4()
+	var result ipAddr
+	copy(result[:], ip)
+	return result
+}
+
 func TestCommandListHeader(t *testing.T) {
 	var headerData [commandListHeaderSize / 8]uint64
 	headerData[0] = 0x1234567801020304
@@ -44,7 +51,7 @@ func TestCommandListStore_AppendCommands_Single(t *testing.T) {
 
 	cmdList, _ := p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
-		ip:   net.IPv4(192, 168, 0, 1).To4(),
+		ip:   newIPAddr(192, 168, 0, 1),
 		port: 8100,
 		data: []byte("some-data"),
 	}, cmdList)
@@ -59,7 +66,7 @@ func TestCommandListStore_AppendCommands_Multiple(t *testing.T) {
 
 	cmdList, completedOffset := p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
-		ip:   net.IPv4(192, 168, 0, 1).To4(),
+		ip:   newIPAddr(192, 168, 0, 1),
 		port: 8100,
 		data: []byte("some-data"),
 	}, cmdList)
@@ -68,7 +75,7 @@ func TestCommandListStore_AppendCommands_Multiple(t *testing.T) {
 
 	cmdList, completedOffset = p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
-		ip:   net.IPv4(123, 9, 2, 5).To4(),
+		ip:   newIPAddr(123, 9, 2, 5),
 		port: 7233,
 		data: []byte("another-data"),
 	}, cmdList)
@@ -77,7 +84,7 @@ func TestCommandListStore_AppendCommands_Multiple(t *testing.T) {
 
 	cmdList, completedOffset = p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
-		ip:   net.IPv4(89, 0, 3, 6).To4(),
+		ip:   newIPAddr(89, 0, 3, 6),
 		port: 7000,
 		data: []byte("random-data"),
 	}, cmdList)
@@ -126,7 +133,7 @@ func TestCommandListStore_Stress_Test(t *testing.T) {
 		for p.waitAvailable() {
 			cmdList, offset := p.getNextRawCommandList()
 
-			assert.Equal(t, net.IPv4(198, 168, 53, 1).To4(), cmdList.ip)
+			assert.Equal(t, newIPAddr(198, 168, 53, 1), cmdList.ip)
 			assert.Equal(t, uint16(8765), cmdList.port)
 			assert.Equal(t, []byte("command-no-"), cmdList.data[:len("command-no-")])
 			p.commitProcessedOffset(offset)

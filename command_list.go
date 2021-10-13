@@ -12,8 +12,10 @@ type atomicUint64 struct {
 	value uint64
 }
 
+type ipAddr [4]byte
+
 type rawCommandList struct {
-	ip   net.IP
+	ip   ipAddr
 	port uint16
 	data []byte
 }
@@ -116,7 +118,7 @@ func (s *commandListStore) getNextRawCommandList() (rawCommandList, uint64) {
 	s.readAt(s.currentCommandData[:header.length], begin+commandListHeaderSize)
 
 	return rawCommandList{
-		ip:   header.ip[:],
+		ip:   header.ip,
 		port: header.port,
 		data: s.currentCommandData[:header.length],
 	}, begin + commandListHeaderSize + uint64(header.length)

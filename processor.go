@@ -23,7 +23,7 @@ type processor struct {
 	cache  *lease.Cache
 	sender ResponseSender
 
-	currentIP        net.IP
+	currentIP        ipAddr
 	currentPort      uint16
 	currentRequestID uint64
 
@@ -102,7 +102,7 @@ func (p *processor) runSingleLoop() bool {
 }
 
 func (p *processor) sendResultFrame(data []byte) {
-	err := p.sender.Send(p.currentIP, p.currentPort, data)
+	err := p.sender.Send(p.currentIP[:], p.currentPort, data)
 	if err != nil {
 		p.options.logger.Error("Send response error", zap.Error(err))
 		return
