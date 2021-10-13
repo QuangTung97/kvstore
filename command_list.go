@@ -2,7 +2,6 @@ package kvstore
 
 import (
 	"net"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -49,17 +48,6 @@ type commandListHeader struct {
 const commandListHeaderSize = uint64(unsafe.Sizeof(commandListHeader{}))
 const commandListHeaderSizeUint64 = (commandListHeaderSize + 7) / 8 // upper bound of dividing by 8
 
-type commandListHeaderData [commandListHeaderSizeUint64]uint64
-
-func getCommandHeaderBytes(data []uint64) []byte {
-	var result []byte
-	header := (*reflect.SliceHeader)(unsafe.Pointer(&result))
-	header.Data = uintptr(unsafe.Pointer(&data[0]))
-	header.Len = int(commandListHeaderSize)
-	header.Cap = int(commandListHeaderSize)
-	return result
-}
-
 func initCommandListStore(s *commandListStore, bufSize int) {
 	s.buffer = make([]byte, bufSize)
 	s.currentCommandData = make([]byte, 1<<16) // 64KB
@@ -93,8 +81,7 @@ func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
 
 	length := uint16(len(data))
 
-	var headerDataAligned commandListHeaderData
-	headerData := getCommandHeaderBytes(headerDataAligned[:])
+	var headerData [commandListHeaderSize]byte
 	header := (*commandListHeader)(unsafe.Pointer(&headerData[0]))
 	copy(header.ip[:], ip.To4())
 	header.port = port
@@ -110,8 +97,7 @@ func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
 func (s *commandListStore) getNextRawCommandList() (rawCommandList, uint64) {
 	begin := s.processed.load()
 
-	var headerDataAligned commandListHeaderData
-	headerData := getCommandHeaderBytes(headerDataAligned[:])
+	var headerData [commandListHeaderSize]byte
 	s.readAt(headerData[:], begin)
 	header := (*commandListHeader)(unsafe.Pointer(&headerData[0]))
 
