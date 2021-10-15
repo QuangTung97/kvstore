@@ -4,18 +4,14 @@ import (
 	"github.com/QuangTung97/kvstore/lease"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
-	"net"
 	"strings"
 	"testing"
 )
 
 func newProcessorForTest(sender ResponseSender, options ...Option) *processor {
 	cache := lease.New(4, 1<<16)
-	return newProcessor(1000, cache, sender, computeOptions(options...))
-}
-
-func newIPv4(a, b, c, d byte) net.IP {
-	return net.IPv4(a, b, c, d).To4()
+	options = append(options, WithBufferSize(1000))
+	return newProcessor(cache, sender, computeOptions(options...))
 }
 
 func TestBuildGetResponse_Found(t *testing.T) {
@@ -46,7 +42,7 @@ func TestBuildGetResponse_Granted_Normal(t *testing.T) {
 }
 
 func (p *processor) perform(
-	ip net.IP, port uint16, startRequestID uint64,
+	ip IPAddr, port uint16, startRequestID uint64,
 	actionList ...string,
 ) {
 	data := make([]byte, 1000)
@@ -75,15 +71,15 @@ func TestProcessor_RunSingleLoop_Single_Command(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213, "LGET key01\r\n")
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 	continued := p.runSingleLoop()
 	assert.Equal(t, true, continued)
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
-	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, newIPAddr(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
 	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
@@ -97,17 +93,17 @@ func TestProcessor_RunSingleLoop_Multi_Commands(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 		"LGET key02\r\n",
 	)
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
-	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, newIPAddr(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
 	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
@@ -126,17 +122,17 @@ func TestProcessor_RunSingleLoop_LGET_Rejected(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 		"LGET key01\r\n",
 	)
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))
-	assert.Equal(t, newIPv4(192, 168, 1, 23), sender.SendCalls()[0].IP)
+	assert.Equal(t, newIPAddr(192, 168, 1, 23), sender.SendCalls()[0].IP)
 	assert.Equal(t, uint16(7200), sender.SendCalls()[0].Port)
 
 	sendData := checkAndGetSendData(t, sender.SendCalls()[0].Data, 1)
@@ -155,9 +151,9 @@ func TestProcessor_RunSingleLoop_SET_OK(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 	)
@@ -171,7 +167,7 @@ func TestProcessor_RunSingleLoop_SET_OK(t *testing.T) {
 	assert.Equal(t, uint64(213), requestID)
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 220,
 		"LSET key01 1 10\r\nsome-value\r\n",
 	)
@@ -189,9 +185,9 @@ func TestProcessor_RunSingleLoop_SET_Not_Affected(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 	)
@@ -205,7 +201,7 @@ func TestProcessor_RunSingleLoop_SET_Not_Affected(t *testing.T) {
 	assert.Equal(t, uint64(213), requestID)
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 220,
 		"LSET key01 2 10\r\nsome-value\r\n",
 	)
@@ -223,10 +219,10 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 	sender := &ResponseSenderMock{}
 	p := newProcessorForTest(sender)
 
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 
 	// LGET
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 	)
@@ -238,7 +234,7 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 	assert.Equal(t, string(data), "GRANTED 1\r\n")
 
 	// LSET
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 220,
 		"LSET key01 1 10\r\nsome-value\r\n",
 	)
@@ -250,7 +246,7 @@ func TestProcessor_RunSingleLoop_DEL_OK(t *testing.T) {
 	assert.Equal(t, "OK 1\r\n", string(data))
 
 	// DEL
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 230,
 		"DEL key01\r\n",
 	)
@@ -275,13 +271,13 @@ func TestProcessor_RunSingleLoop_LGET_OK_Exceed_ResultPackageSize(t *testing.T) 
 	p := newProcessorForTest(sender, WithMaxResultPackageSize(32))
 	p.cache.GetUnsafeInnerCache().Put([]byte("key01"), []byte(strings.Repeat("A", 9)))
 
-	p.perform(newIPv4(192, 168, 1, 23),
+	p.perform(newIPAddr(192, 168, 1, 23),
 		7200, 213,
 		"LGET key01\r\n",
 	)
 
 	var sendDataList [][]byte
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error {
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error {
 		sendDataList = append(sendDataList, cloneBytes(data))
 		return nil
 	}
@@ -319,7 +315,7 @@ func TestProcessor_RunSingleLoop_ParseDataFrameEntry_Error(t *testing.T) {
 
 	p := newProcessorForTest(sender, WithLogger(logger))
 
-	ip := newIPv4(192, 168, 1, 12)
+	ip := newIPAddr(192, 168, 1, 12)
 	p.appendCommands(ip, 7200, []byte{1, 2})
 
 	p.runSingleLoop()
@@ -327,10 +323,10 @@ func TestProcessor_RunSingleLoop_ParseDataFrameEntry_Error(t *testing.T) {
 
 func TestProcessor_RunSingleLoop_LGET_Missing_Key(t *testing.T) {
 	sender := &ResponseSenderMock{}
-	sender.SendFunc = func(ip net.IP, port uint16, data []byte) error { return nil }
+	sender.SendFunc = func(ip IPAddr, port uint16, data []byte) error { return nil }
 
 	p := newProcessorForTest(sender)
-	p.perform(newIPv4(192, 168, 1, 2), 8200, 10, "LGET\r\n")
+	p.perform(newIPAddr(192, 168, 1, 2), 8200, 10, "LGET\r\n")
 	p.runSingleLoop()
 
 	assert.Equal(t, 1, len(sender.SendCalls()))

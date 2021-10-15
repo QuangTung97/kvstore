@@ -4,7 +4,6 @@
 package kvstore
 
 import (
-	"net"
 	"sync"
 )
 
@@ -18,7 +17,7 @@ var _ ResponseSender = &ResponseSenderMock{}
 //
 // 		// make and configure a mocked ResponseSender
 // 		mockedResponseSender := &ResponseSenderMock{
-// 			SendFunc: func(ip net.IP, port uint16, data []byte) error {
+// 			SendFunc: func(ip IPAddr, port uint16, data []byte) error {
 // 				panic("mock out the Send method")
 // 			},
 // 		}
@@ -29,14 +28,14 @@ var _ ResponseSender = &ResponseSenderMock{}
 // 	}
 type ResponseSenderMock struct {
 	// SendFunc mocks the Send method.
-	SendFunc func(ip net.IP, port uint16, data []byte) error
+	SendFunc func(ip IPAddr, port uint16, data []byte) error
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// Send holds details about calls to the Send method.
 		Send []struct {
 			// IP is the ip argument value.
-			IP net.IP
+			IP IPAddr
 			// Port is the port argument value.
 			Port uint16
 			// Data is the data argument value.
@@ -47,12 +46,12 @@ type ResponseSenderMock struct {
 }
 
 // Send calls SendFunc.
-func (mock *ResponseSenderMock) Send(ip net.IP, port uint16, data []byte) error {
+func (mock *ResponseSenderMock) Send(ip IPAddr, port uint16, data []byte) error {
 	if mock.SendFunc == nil {
 		panic("ResponseSenderMock.SendFunc: method is nil but ResponseSender.Send was just called")
 	}
 	callInfo := struct {
-		IP   net.IP
+		IP   IPAddr
 		Port uint16
 		Data []byte
 	}{
@@ -70,12 +69,12 @@ func (mock *ResponseSenderMock) Send(ip net.IP, port uint16, data []byte) error 
 // Check the length with:
 //     len(mockedResponseSender.SendCalls())
 func (mock *ResponseSenderMock) SendCalls() []struct {
-	IP   net.IP
+	IP   IPAddr
 	Port uint16
 	Data []byte
 } {
 	var calls []struct {
-		IP   net.IP
+		IP   IPAddr
 		Port uint16
 		Data []byte
 	}

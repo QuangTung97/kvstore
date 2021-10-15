@@ -4,14 +4,13 @@ import (
 	"github.com/QuangTung97/kvstore/lease"
 	"github.com/QuangTung97/kvstore/parser"
 	"go.uber.org/zap"
-	"net"
 )
 
 //go:generate moq -out processor_mocks_test.go . ResponseSender
 
 // ResponseSender ...
 type ResponseSender interface {
-	Send(ip net.IP, port uint16, data []byte) error
+	Send(ip IPAddr, port uint16, data []byte) error
 }
 
 type processor struct {
@@ -23,7 +22,7 @@ type processor struct {
 	cache  *lease.Cache
 	sender ResponseSender
 
-	currentIP        ipAddr
+	currentIP        IPAddr
 	currentPort      uint16
 	currentRequestID uint64
 
@@ -37,7 +36,7 @@ type processor struct {
 }
 
 func newProcessor(
-	buffSize int, cache *lease.Cache,
+	cache *lease.Cache,
 	sender ResponseSender, options kvstoreOptions,
 ) *processor {
 	p := &processor{
@@ -46,12 +45,12 @@ func newProcessor(
 		cache:  cache,
 		sender: sender,
 
-		resultData:     make([]byte, buffSize),
-		sendData:       make([]byte, buffSize),
+		resultData:     make([]byte, options.bufferSize),
+		sendData:       make([]byte, options.bufferSize),
 		sendFrame:      make([]byte, options.maxResultPackageSize),
 		currentBatchID: 0,
 	}
-	initCommandListStore(&p.cmdStore, buffSize)
+	initCommandListStore(&p.cmdStore, options.bufferSize)
 	parser.InitParser(&p.parser, p)
 	return p
 }
@@ -60,8 +59,21 @@ func (p *processor) isCommandAppendable(dataSize int) bool {
 	return p.cmdStore.isCommandAppendable(dataSize)
 }
 
-func (p *processor) appendCommands(ip net.IP, port uint16, data []byte) {
+func (p *processor) appendCommands(ip IPAddr, port uint16, data []byte) {
 	p.cmdStore.appendCommands(ip, port, data)
+}
+
+func (p *processor) run() {
+	for {
+		continued := p.runSingleLoop()
+		if !continued {
+			return
+		}
+	}
+}
+
+func (p *processor) shutdown() {
+	p.cmdStore.stopWait()
 }
 
 func (p *processor) runSingleLoop() bool {
@@ -71,6 +83,7 @@ func (p *processor) runSingleLoop() bool {
 	}
 
 	cmdList, committedOffset := p.cmdStore.getNextRawCommandList()
+	defer p.cmdStore.commitProcessedOffset(committedOffset)
 
 	p.currentIP = cmdList.ip
 	p.currentPort = cmdList.port
@@ -96,13 +109,11 @@ func (p *processor) runSingleLoop() bool {
 	}
 
 	p.sendResponse()
-
-	p.cmdStore.commitProcessedOffset(committedOffset)
 	return true
 }
 
 func (p *processor) sendResultFrame(data []byte) {
-	err := p.sender.Send(p.currentIP[:], p.currentPort, data)
+	err := p.sender.Send(p.currentIP, p.currentPort, data)
 	if err != nil {
 		p.options.logger.Error("Send response error", zap.Error(err))
 		return

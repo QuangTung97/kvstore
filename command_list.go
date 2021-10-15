@@ -1,7 +1,6 @@
 package kvstore
 
 import (
-	"net"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -11,10 +10,11 @@ type atomicUint64 struct {
 	value uint64
 }
 
-type ipAddr [4]byte
+// IPAddr only supported IPv4
+type IPAddr [4]byte
 
 type rawCommandList struct {
-	ip   ipAddr
+	ip   IPAddr
 	port uint16
 	data []byte
 }
@@ -25,6 +25,10 @@ func (a *atomicUint64) store(v uint64) {
 
 func (a *atomicUint64) load() uint64 {
 	return atomic.LoadUint64(&a.value)
+}
+
+func (a *atomicUint64) increase() uint64 {
+	return atomic.AddUint64(&a.value, 1)
 }
 
 type commandListStore struct {
@@ -46,7 +50,6 @@ type commandListHeader struct {
 }
 
 const commandListHeaderSize = uint64(unsafe.Sizeof(commandListHeader{}))
-const commandListHeaderSizeUint64 = (commandListHeaderSize + 7) / 8 // upper bound of dividing by 8
 
 func initCommandListStore(s *commandListStore, bufSize int) {
 	s.buffer = make([]byte, bufSize)
@@ -76,14 +79,14 @@ func (s *commandListStore) readAt(data []byte, pos uint64) {
 	}
 }
 
-func (s *commandListStore) appendCommands(ip net.IP, port uint16, data []byte) {
+func (s *commandListStore) appendCommands(ip IPAddr, port uint16, data []byte) {
 	s.mut.Lock()
 
 	length := uint16(len(data))
 
 	var headerData [commandListHeaderSize]byte
 	header := (*commandListHeader)(unsafe.Pointer(&headerData[0]))
-	copy(header.ip[:], ip.To4())
+	header.ip = ip
 	header.port = port
 	header.length = length
 
@@ -124,7 +127,7 @@ func (s *commandListStore) waitAvailable() bool {
 	for s.nextOffset <= s.processed.load() && !s.stopped {
 		s.cond.Wait()
 	}
-	continued := !s.stopped
+	continued := s.nextOffset > s.processed.load() || !s.stopped
 	s.mut.Unlock()
 	return continued
 }

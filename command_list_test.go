@@ -22,16 +22,17 @@ func newCommandListStoreBuffSize(buffSize int) *commandListStore {
 	return s
 }
 
-func newIPAddr(a, b, c, d byte) ipAddr {
+func newIPAddr(a, b, c, d byte) IPAddr {
 	ip := net.IPv4(a, b, c, d).To4()
-	var result ipAddr
+	var result IPAddr
 	copy(result[:], ip)
 	return result
 }
 
 func TestCommandListStore_AppendCommands_Single(t *testing.T) {
+	// TODO convert from p to s
 	p := newCommandListStore()
-	p.appendCommands(net.IPv4(192, 168, 0, 1), 8100, []byte("some-data"))
+	p.appendCommands(newIPAddr(192, 168, 0, 1), 8100, []byte("some-data"))
 
 	cmdList, _ := p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
@@ -44,9 +45,9 @@ func TestCommandListStore_AppendCommands_Single(t *testing.T) {
 func TestCommandListStore_AppendCommands_Multiple(t *testing.T) {
 	p := newCommandListStore()
 
-	p.appendCommands(net.IPv4(192, 168, 0, 1), 8100, []byte("some-data"))
-	p.appendCommands(net.IPv4(123, 9, 2, 5), 7233, []byte("another-data"))
-	p.appendCommands(net.IPv4(89, 0, 3, 6), 7000, []byte("random-data"))
+	p.appendCommands(newIPAddr(192, 168, 0, 1), 8100, []byte("some-data"))
+	p.appendCommands(newIPAddr(123, 9, 2, 5), 7233, []byte("another-data"))
+	p.appendCommands(newIPAddr(89, 0, 3, 6), 7000, []byte("random-data"))
 
 	cmdList, completedOffset := p.getNextRawCommandList()
 	assert.Equal(t, rawCommandList{
@@ -79,7 +80,7 @@ func TestCommandListStore_AppendCommands_Multiple(t *testing.T) {
 
 func TestCommandListStore_WaitAvailable_Single_Command(t *testing.T) {
 	p := newCommandListStore()
-	p.appendCommands(net.IPv4(192, 168, 0, 1), 8100, []byte("some-data"))
+	p.appendCommands(newIPAddr(192, 168, 0, 1), 8100, []byte("some-data"))
 	continued := p.waitAvailable()
 	assert.Equal(t, true, continued)
 }
@@ -133,7 +134,7 @@ func TestCommandListStore_Stress_Test(t *testing.T) {
 		for !p.isCommandAppendable(size) {
 			//revive:disable-next-line:empty-block
 		}
-		p.appendCommands(net.IPv4(198, 168, 53, 1), 8765, data)
+		p.appendCommands(newIPAddr(198, 168, 53, 1), 8765, data)
 	}
 
 	for atomic.LoadUint32(&count) < numCommands {
