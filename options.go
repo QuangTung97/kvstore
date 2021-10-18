@@ -6,7 +6,11 @@ type kvstoreOptions struct {
 	numProcessors        int
 	bufferSize           int
 	maxResultPackageSize int
-	logger               *zap.Logger
+
+	bigCommandStoreSize int
+	maxBatchSize        int
+
+	logger *zap.Logger
 }
 
 // Option ...
@@ -15,9 +19,13 @@ type Option func(opts *kvstoreOptions)
 func computeOptions(options ...Option) kvstoreOptions {
 	opts := kvstoreOptions{
 		numProcessors:        4,
-		bufferSize:           2 << 10, // 2MB
+		bufferSize:           2 << 20, // 2MB
 		maxResultPackageSize: 1 << 15, // 32KB
-		logger:               zap.NewNop(),
+
+		bigCommandStoreSize: 8 << 20, // 8MB
+		maxBatchSize:        1 << 20, // 1MB
+
+		logger: zap.NewNop(),
 	}
 	for _, o := range options {
 		o(&opts)
@@ -43,6 +51,13 @@ func WithBufferSize(size int) Option {
 func WithMaxResultPackageSize(size int) Option {
 	return func(opts *kvstoreOptions) {
 		opts.maxResultPackageSize = size
+	}
+}
+
+// WithMaxBatchSize ...
+func WithMaxBatchSize(size int) Option {
+	return func(opts *kvstoreOptions) {
+		opts.maxBatchSize = size
 	}
 }
 

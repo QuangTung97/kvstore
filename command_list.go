@@ -27,10 +27,6 @@ func (a *atomicUint64) load() uint64 {
 	return atomic.LoadUint64(&a.value)
 }
 
-func (a *atomicUint64) increase() uint64 {
-	return atomic.AddUint64(&a.value, 1)
-}
-
 type commandListStore struct {
 	mut     sync.Mutex
 	cond    *sync.Cond

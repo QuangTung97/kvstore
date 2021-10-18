@@ -1,13 +1,15 @@
 package kvstore
 
 import (
+	"github.com/QuangTung97/kvstore/bigcmd"
 	"github.com/QuangTung97/kvstore/lease"
 	"sync"
 )
 
 type receiver struct {
 	processors []*processor
-	sequence   atomicUint64 // for selecting next processor
+	store      bigcmd.Store
+	sequence   uint64 // for selecting next processor
 	wg         sync.WaitGroup
 }
 
@@ -20,22 +22,33 @@ func initReceiver(
 		processors = append(processors, newProcessor(cache, sender, options))
 	}
 	r.processors = processors
-	r.sequence.value = 0
+	r.sequence = 0
+
+	bigcmd.InitStore(&r.store, options.bigCommandStoreSize, options.maxBatchSize)
 }
 
 func (r *receiver) recv(ip IPAddr, port uint16, data []byte) {
-	for {
-		_, nextOffset := parseDataFrameHeader(data)
-		data = data[nextOffset:]
+	header, nextOffset := parseDataFrameHeader(data)
+	data = data[nextOffset:]
 
-		seq := r.sequence.increase()
+	if header.fragmented {
+		filled := r.store.Put(header.batchID, header.length, header.offset, data)
+		if !filled {
+			return
+		}
+		data = r.store.Get(header.batchID)
+	}
+
+	for {
+		seq := r.sequence
+		r.sequence++
 		index := seq % uint64(len(r.processors))
 		p := r.processors[index]
 		if !p.isCommandAppendable(len(data)) {
 			continue
 		}
 		p.appendCommands(ip, port, data)
-		break
+		return
 	}
 }
 
