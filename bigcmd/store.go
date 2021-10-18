@@ -102,6 +102,9 @@ func (s *Store) Put(
 		s.writeAt(info.index, batchHeaderData[:])
 
 		s.size += batchHeaderSize + int(length)
+	} else if info.length != length {
+		delete(s.batches, batchID)
+		return false
 	}
 
 	s.writeAt(info.index+batchHeaderSize+int(offset), data)

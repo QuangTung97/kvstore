@@ -41,6 +41,21 @@ func TestStore_Data_Bigger_Than_Length(t *testing.T) {
 	assert.Equal(t, []byte(nil), result)
 }
 
+func TestStore_Length_Not_Equal_Prev(t *testing.T) {
+	s := newStore(28)
+
+	data := []byte(strings.Repeat("A", 10))
+	filled := s.Put(10, 20, 0, data)
+	assert.Equal(t, false, filled)
+
+	data = []byte(strings.Repeat("A", 11))
+	filled = s.Put(10, 21, 10, data)
+	assert.Equal(t, false, filled)
+
+	result := s.Get(10)
+	assert.Equal(t, []byte(nil), result)
+}
+
 func TestStore_Put_Asymmetric(t *testing.T) {
 	s := newStore(28)
 
